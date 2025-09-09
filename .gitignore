@@ -1,0 +1,8 @@
+# Node / Python / Editor
+node_modules/
+dist/
+.env
+__pycache__/
+.venv/
+.DS_Store
+uploads/
