@@ -1,0 +1,91 @@
+/* src/SubmissionsList.css */
+
+/* Container */
+.submissions-container {
+  margin-top: 14px;
+  background: #fff;
+  border: 1px solid #e0e6eb;
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+}
+
+/* Filters row */
+.filters-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+  align-items: center;
+}
+.filters-row select {
+  padding: 8px 10px;
+  border: 1px solid #d0d7de;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 14px;
+  color: #182B1C;
+}
+.filters-row .refresh-btn {
+  background: linear-gradient(90deg, #007BFF, #00C6FF);
+  border: none;
+  padding: 8px 14px;
+  color: #fff;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.filters-row .refresh-btn:hover {
+  box-shadow: 0 4px 12px rgba(0,123,255,0.3);
+}
+
+/* Submission cards */
+.submission-card {
+  background: #fff;
+  border: 1px solid #e0e6eb;
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+}
+.submission-info {
+  color: #182B1C;
+  font-size: 14px;
+}
+.submission-title {
+  font-weight: 700;
+  color: #205067;
+  margin-bottom: 4px;
+}
+.submission-meta {
+  font-size: 12px;
+  color: #617882;
+}
+
+/* Status badges */
+.badge {
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-weight: 600;
+  font-size: 13px;
+  text-transform: capitalize;
+}
+.badge.finalized { background: #28A745; color: #fff; }
+.badge.pending { background: #FFC107; color: #182B1C; }
+.badge.rejected { background: #DC3545; color: #fff; }
+
+/* View button */
+.view-btn {
+  background: linear-gradient(90deg, #205067, #1D4E65);
+  color: #fff;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.view-btn:hover {
+  box-shadow: 0 4px 10px rgba(32,80,103,0.3);
+}

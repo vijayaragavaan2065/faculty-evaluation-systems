@@ -1,0 +1,69 @@
+/* src/components/NewSubmission.css */
+.newsubmission-card {
+  background: #fff;
+  border-radius: 12px;
+  padding: 20px;
+  max-width: 920px;
+  margin-top: 12px;
+  border: 1px solid #e0e6eb;
+  box-shadow: 0 6px 14px rgba(0,0,0,0.08);
+}
+
+.newsubmission-card h2 {
+  margin-top: 0;
+  color: #205067;
+  font-weight: 800;
+}
+.muted { color: #617882; }
+
+.newsubmission-form .row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 14px;
+}
+.newsubmission-form label {
+  display: block;
+  color: #205067;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.newsubmission-form input,
+.newsubmission-form select {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #d0d7de;
+  background: #fff;
+  color: #182B1C;
+  min-width: 180px;
+  font-size: 14px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-top: 8px;
+}
+.field { display: flex; flex-direction: column; }
+
+.btn.primary {
+  background: linear-gradient(90deg,#007BFF,#00C6FF);
+  border: none;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-weight: 700;
+  color: #fff;
+  cursor: pointer;
+}
+.btn.primary:hover { box-shadow: 0 6px 14px rgba(0,123,255,0.3); }
+
+.btn.ghost {
+  background: transparent;
+  border: 1px solid #d0d7de;
+  color: #205067;
+  padding: 10px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.btn.ghost:hover { background: #f8f9fa; }
