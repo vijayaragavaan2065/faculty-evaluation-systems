@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, status, Path
+from fastapi.responses import StreamingResponse
 from app.routers.auth import get_current_user
 from app.db.client import db
 from bson import ObjectId
@@ -6,9 +7,11 @@ import os
 import traceback
 from datetime import datetime, date
 from typing import Optional, Any, Dict
+from io import BytesIO
 
 # import ai service (keep same as your project)
 from app.services import ai_service
+from app.services.pdf_service import generate_kpi_pdf
 
 router = APIRouter()
 
@@ -168,9 +171,12 @@ async def create_submission(
 
     # assign department from the current_user (must exist for faculty / hod)
     department = current_user.get("department")
+    faculty_name = current_user.get("name") or current_user.get("email", "Unknown")
 
     submission = {
         "faculty_user_id": current_user["id"],
+        "faculty_name": faculty_name,
+        "faculty_email": current_user.get("email"),
         "faculty_rank": faculty_rank,
         "academic_year": academic_year,
         "department": department,
@@ -227,6 +233,12 @@ async def create_submission(
         "created_at": datetime.utcnow(),
     }
 
+    # DEBUG: Log what we're about to save
+    print(f"\n=== CREATE SUBMISSION DEBUG ===")
+    print(f"pass_percent received: {pass_percent}")
+    print(f"student_feedback received: {student_feedback}")
+    print(f"academic dict: {submission.get('academic')}")
+    
     # compute AI/rule-based score and feedback now
     try:
         scored = ai_service.score_submission(submission)
@@ -399,6 +411,268 @@ async def get_submission(
                     f["download_url"] = f"/uploads/{f['stored_filename']}"
 
     return safe
+
+
+@router.patch("/{submission_id}", status_code=200)
+async def update_submission(
+    submission_id: str = Path(..., pattern=r"^[0-9a-fA-F]{24}$"),
+    faculty_rank: str = Form(...),
+    academic_year: str = Form(...),
+    pass_percent: float = Form(...),
+    student_feedback: float = Form(...),
+    online_videos: int = Form(...),
+    sdg_activities: int = Form(...),
+    vac_hours: int = Form(...),
+    publications: int = Form(...),
+    citations: int = Form(...),
+    consultancy_revenue: float = Form(0.0),
+    sponsored_grants_count: int = Form(0),
+    sponsored_grants_amount: float = Form(0.0),
+    research_visits: int = Form(0),
+    memberships_count: int = Form(0),
+    fdp_days_phys: float = Form(0.0),
+    fdp_days_online: float = Form(0.0),
+    mooc_4w: int = Form(0),
+    mandatory_courses: int = Form(0),
+    convener_days: int = Form(0),
+    convener_online_days: int = Form(0),
+    guest_hours: int = Form(0),
+    committee_events: int = Form(0),
+    conferences_organized: int = Form(0),
+    events_a: int = Form(0),
+    events_b: int = Form(0),
+    events_c: int = Form(0),
+    head_count: int = Form(0),
+    member_count: int = Form(0),
+    dept_responsibilities: int = Form(0),
+    outreach_activities: int = Form(0),
+    resource_person_hours: int = Form(0),
+    resource_outside_hours: int = Form(0),
+    resource_inside_hours: int = Form(0),
+    training_days: int = Form(0),
+    awards_count: int = Form(0),
+    editorial_count: int = Form(0),
+    reviews_count: int = Form(0),
+    section_totals_json: str = Form(None),
+    proof: UploadFile = File(None),
+    proof_row_1: UploadFile = File(None),
+    proof_row_2: UploadFile = File(None),
+    proof_row_3: UploadFile = File(None),
+    proof_row_4: UploadFile = File(None),
+    proof_row_5: UploadFile = File(None),
+    proof_row_6: UploadFile = File(None),
+    proof_row_7: UploadFile = File(None),
+    proof_row_8: UploadFile = File(None),
+    proof_row_9: UploadFile = File(None),
+    proof_row_10: UploadFile = File(None),
+    proof_row_11: UploadFile = File(None),
+    proof_row_12: UploadFile = File(None),
+    proof_row_13: UploadFile = File(None),
+    proof_row_14: UploadFile = File(None),
+    proof_row_15: UploadFile = File(None),
+    proof_row_16: UploadFile = File(None),
+    proof_row_17: UploadFile = File(None),
+    proof_row_18: UploadFile = File(None),
+    proof_row_19: UploadFile = File(None),
+    proof_row_20: UploadFile = File(None),
+    current_user: dict = Depends(get_current_user),
+):
+    """Update an existing submission. Only accessible to submission owner or admin roles."""
+    try:
+        oid = ObjectId(submission_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail=f"invalid submission id: {submission_id}")
+
+    # Check if submission exists
+    existing = await db.submissions.find_one({"_id": oid})
+    if not existing:
+        raise HTTPException(status_code=404, detail="submission not found")
+
+    # Authorization: owner or higher roles
+    faculty_id = str(existing.get("faculty_user_id"))
+    is_owner = faculty_id == current_user["id"]
+    if not is_owner and not is_higher_role(current_user):
+        raise HTTPException(status_code=403, detail="Not authorized to edit this submission")
+
+    # Handle global proof file upload
+    file_meta = existing.get("file_meta")
+    if proof:
+        safe_name = f"{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{proof.filename}"
+        out_path = os.path.join(UPLOAD_DIR, safe_name)
+        with open(out_path, "wb") as f:
+            f.write(await proof.read())
+        file_meta = {
+            "original_filename": proof.filename,
+            "stored_path": out_path,
+            "stored_filename": safe_name,
+            "content_type": proof.content_type,
+            "uploaded_at": datetime.utcnow()
+        }
+
+    # Handle per-row proof uploads
+    row_proofs = {}
+    row_files = [
+        proof_row_1, proof_row_2, proof_row_3, proof_row_4, proof_row_5,
+        proof_row_6, proof_row_7, proof_row_8, proof_row_9, proof_row_10,
+        proof_row_11, proof_row_12, proof_row_13, proof_row_14, proof_row_15,
+        proof_row_16, proof_row_17, proof_row_18, proof_row_19, proof_row_20
+    ]
+
+    for idx, file in enumerate(row_files, start=1):
+        key = f"proof_row_{idx}"
+        # Keep existing proofs if no new file uploaded
+        if file:
+            safe_name = f"{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{file.filename}"
+            out_path = os.path.join(UPLOAD_DIR, safe_name)
+            with open(out_path, "wb") as f:
+                f.write(await file.read())
+            
+            # Append to existing proofs for this row
+            existing_row_proofs = existing.get(key, [])
+            new_proof = {
+                "original_filename": file.filename,
+                "stored_path": out_path,
+                "stored_filename": safe_name,
+                "content_type": file.content_type,
+                "uploaded_at": datetime.utcnow()
+            }
+            row_proofs[key] = existing_row_proofs + [new_proof]
+        else:
+            # Keep existing proofs
+            if key in existing:
+                row_proofs[key] = existing[key]
+
+    # Build update document
+    faculty_name = current_user.get("name") or current_user.get("email", "Unknown")
+    update_data = {
+        "faculty_name": faculty_name,
+        "faculty_email": current_user.get("email"),
+        "faculty_rank": faculty_rank,
+        "academic_year": academic_year,
+        "academic": {
+            "pass_percent": pass_percent,
+            "student_feedback": student_feedback,
+            "online_videos": online_videos,
+            "sdg_activities": sdg_activities,
+            "vac_hours": vac_hours,
+        },
+        "research": {
+            "publications": publications,
+            "citations": citations,
+            "consultancy_revenue": consultancy_revenue,
+            "sponsored_grants_count": sponsored_grants_count,
+            "sponsored_grants_amount": sponsored_grants_amount,
+            "research_visits": research_visits,
+            "memberships_count": memberships_count,
+            "fdp_days_phys": fdp_days_phys,
+            "fdp_days_online": fdp_days_online,
+            "mooc_4w": mooc_4w,
+            "mandatory_courses": mandatory_courses,
+        },
+        "administration": {
+            "convener_days": convener_days,
+            "convener_online_days": convener_online_days,
+            "guest_hours": guest_hours,
+            "committee_events": committee_events,
+            "conferences_organized": conferences_organized,
+            "events_a": events_a,
+            "events_b": events_b,
+            "events_c": events_c,
+            "head_count": head_count,
+            "member_count": member_count,
+            "dept_responsibilities": dept_responsibilities,
+        },
+        "outreach": {
+            "outreach_activities": outreach_activities,
+            "resource_person_hours": resource_person_hours,
+            "resource_outside_hours": resource_outside_hours,
+            "resource_inside_hours": resource_inside_hours,
+            "training_days": training_days,
+            "awards_count": awards_count,
+            "editorial_count": editorial_count,
+            "reviews_count": reviews_count,
+        },
+        "file_meta": file_meta,
+        "section_totals_json": section_totals_json,
+        "updated_at": datetime.utcnow(),
+        **row_proofs,
+    }
+
+    # DEBUG: Log what we're about to update
+    print(f"\n=== UPDATE SUBMISSION DEBUG ===")
+    print(f"pass_percent received: {pass_percent}")
+    print(f"student_feedback received: {student_feedback}")
+    print(f"academic dict: {update_data.get('academic')}")
+    
+    # Recompute AI score
+    try:
+        scored = ai_service.score_submission(update_data)
+        update_data["score"] = scored.get("score")
+        update_data["section_totals"] = scored.get("section_totals")
+        update_data["ai_feedback"] = scored.get("ai_feedback")
+        update_data["score_debug"] = scored.get("debug")
+        update_data["scored_at"] = scored.get("scored_at")
+    except Exception as e:
+        print("ai scoring error during update:", e)
+        traceback.print_exc()
+
+    # Update the submission
+    await db.submissions.update_one(
+        {"_id": oid},
+        {"$set": update_data}
+    )
+
+    return {"message": "Submission updated successfully", "submission_id": submission_id}
+
+
+@router.get("/{submission_id}/kpi-pdf", status_code=200)
+async def download_submission_kpi_pdf(
+    submission_id: str = Path(..., pattern=r"^[0-9a-fA-F]{24}$"),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Generate and download a KPI PDF report for a specific submission.
+    Accessible to: submission owner, HOD (same department), or higher roles.
+    """
+    try:
+        oid = ObjectId(submission_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail=f"invalid submission id: {submission_id}")
+
+    doc = await db.submissions.find_one({"_id": oid})
+    if not doc:
+        raise HTTPException(status_code=404, detail="submission not found")
+
+    # Authorization check
+    role = (current_user.get("role") or "").lower()
+    faculty_id = str(doc.get("faculty_user_id"))
+    submission_dept = doc.get("department")
+    user_dept = current_user.get("department")
+    
+    # Allow: submission owner, HOD of same department, or higher roles
+    is_owner = faculty_id == current_user["id"]
+    is_hod_same_dept = (role == "hod" and submission_dept and user_dept and submission_dept == user_dept)
+    is_authorized = is_owner or is_hod_same_dept or is_higher_role(current_user)
+    
+    if not is_authorized:
+        raise HTTPException(status_code=403, detail="Not authorized to download this PDF")
+
+    # DEBUG: Log what we're sending to PDF
+    print(f"\n=== PDF GENERATION DEBUG ===")
+    print(f"Raw doc academic: {doc.get('academic')}")
+    
+    # Generate PDF using the existing service
+    safe = sanitize_doc(doc)
+    print(f"Sanitized academic: {safe.get('academic')}")
+    pdf_buffer = generate_kpi_pdf(safe)
+    
+    # Return as downloadable file
+    filename = f"kpi-report-{submission_id}.pdf"
+    return StreamingResponse(
+        pdf_buffer,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
 
 
 @router.patch("/{submission_id}/verify", status_code=200)

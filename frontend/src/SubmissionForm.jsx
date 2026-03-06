@@ -49,11 +49,13 @@ export default function SubmissionForm({
   const [convenerOnlineDays, setConvenerOnlineDays] = useState(0);
   const [guestHours, setGuestHours] = useState(0);
   const [committeeEvents, setCommitteeEvents] = useState(0);
+  const [conferencesOrganized, setConferencesOrganized] = useState(0);
   const [eventsA, setEventsA] = useState(0);
   const [eventsB, setEventsB] = useState(0);
   const [eventsC, setEventsC] = useState(0);
   const [headCount, setHeadCount] = useState(0);
   const [memberCount, setMemberCount] = useState(0);
+  const [deptResponsibilities, setDeptResponsibilities] = useState(0);
 
   // --- Outreach
   const [outreachActivities, setOutreachActivities] = useState(0);
@@ -261,11 +263,13 @@ export default function SubmissionForm({
     convenerOnlineDays,
     guestHours,
     committeeEvents,
+    conferencesOrganized,
     eventsA,
     eventsB,
     eventsC,
     headCount,
     memberCount,
+    deptResponsibilities,
     outreachActivities,
     resourceOutsideHours,
     resourceInsideHours,
@@ -305,11 +309,13 @@ export default function SubmissionForm({
     setConvenerOnlineDays(submission.convener_online_days ?? convenerOnlineDays);
     setGuestHours(submission.guest_hours ?? guestHours);
     setCommitteeEvents(submission.committee_events ?? committeeEvents);
+    setConferencesOrganized(submission.conferences_organized ?? conferencesOrganized);
     setEventsA(submission.events_a ?? eventsA);
     setEventsB(submission.events_b ?? eventsB);
     setEventsC(submission.events_c ?? eventsC);
     setHeadCount(submission.head_count ?? headCount);
     setMemberCount(submission.member_count ?? memberCount);
+    setDeptResponsibilities(submission.dept_responsibilities ?? deptResponsibilities);
 
     setOutreachActivities(submission.outreach_activities ?? outreachActivities);
     setResourceOutsideHours(submission.resource_outside_hours ?? resourceOutsideHours);
@@ -430,11 +436,13 @@ export default function SubmissionForm({
       fd.append("convener_online_days", toInt(convenerOnlineDays));
       fd.append("guest_hours", toInt(guestHours));
       fd.append("committee_events", toInt(committeeEvents));
+      fd.append("conferences_organized", toInt(conferencesOrganized));
       fd.append("events_a", toInt(eventsA));
       fd.append("events_b", toInt(eventsB));
       fd.append("events_c", toInt(eventsC));
       fd.append("head_count", toInt(headCount));
       fd.append("member_count", toInt(memberCount));
+      fd.append("dept_responsibilities", toInt(deptResponsibilities));
 
       // outreach
       fd.append("outreach_activities", toInt(outreachActivities));
@@ -466,7 +474,7 @@ export default function SubmissionForm({
       const isUpdate = !!(submission && (submission._id || submission.id));
       const urlBase = apiBase.replace(/\/$/, "");
       const url = isUpdate
-        ? `${urlBase}/api/submissions/${encodeURIComponent(submission._id || submission.id)}/`
+        ? `${urlBase}/api/submissions/${encodeURIComponent(submission._id || submission.id)}`
         : `${urlBase}/api/submissions/`;
 
       const res = await fetch(url, {
@@ -606,6 +614,38 @@ export default function SubmissionForm({
     }
   }
 
+  // Helper to check if click should trigger row focus
+  function shouldFocusRow(e) {
+    const tag = e.target.tagName?.toLowerCase();
+    // Don't focus if clicking on interactive elements
+    if (["button","input","label","a"].includes(tag)) return false;
+    
+    // Don't focus if clicking inside input containers, badges, or file attach areas
+    const classList = e.target.className || "";
+    if (classList.includes("numeric-input") || 
+        classList.includes("file-attach-wrap") || 
+        classList.includes("btn-attach") ||
+        classList.includes("btn-small") ||
+        classList.includes("file-name")) {
+      return false;
+    }
+    
+    // Check if click is within any input, badge, or file area by checking parent elements
+    let el = e.target;
+    while (el && !el.classList?.contains("row")) {
+      const parentClass = el.className || "";
+      if (parentClass.includes("file-attach-wrap") || 
+          el.tagName?.toLowerCase() === "input" ||
+          el.tagName?.toLowerCase() === "button" ||
+          el.tagName?.toLowerCase() === "label") {
+        return false;
+      }
+      el = el.parentElement;
+    }
+    
+    return true;
+  }
+
   // Styles (same as before)
   const styles = {
     overlay: { position: "fixed", inset: 0, background: "rgba(3,6,23,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 3000, padding: 18 },
@@ -671,7 +711,7 @@ export default function SubmissionForm({
 
           <div style={{ padding: 12, maxHeight: "60vh", overflowY: "auto" }}>
             {/* Row 1 */}
-            <div className="row" style={styles.row} onClick={(e) => { const tag = e.target.tagName?.toLowerCase(); if (!["button","input","label","a"].includes(tag)) focusRowInput(1); }}>
+            <div className="row" style={styles.row} onClick={(e) => { if (shouldFocusRow(e)) focusRowInput(1); }}>
               <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>1</div>
               <div>% Pass in ESE (Average of all theory courses)</div>
               <div style={{ color: "rgba(200,220,255,0.7)" }}>{isAPIII ? "81% - 95% → 0–20" : "80% - 95% → 0–30"}</div>
@@ -684,7 +724,7 @@ export default function SubmissionForm({
             </div>
 
             {/* Row 2 */}
-            <div className="row" style={styles.row} onClick={(e) => { const tag = e.target.tagName?.toLowerCase(); if (!["button","input","label","a"].includes(tag)) focusRowInput(2); }}>
+            <div className="row" style={styles.row} onClick={(e) => { if (shouldFocusRow(e)) focusRowInput(2); }}>
               <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>2</div>
               <div>Student Feedback (Average of all theory courses)</div>
               <div style={{ color: "rgba(200,220,255,0.7)" }}>{isAPIII ? "3.1 - 4.5 (out of 5) → 0–20" : "3.0 - 4.5 (out of 5) → 0–30"}</div>
@@ -697,7 +737,7 @@ export default function SubmissionForm({
             </div>
 
             {/* Row 3 */}
-            <div className="row" style={styles.row} onClick={(e) => { const tag = e.target.tagName?.toLowerCase(); if (!["button","input","label","a"].includes(tag)) focusRowInput(3); }}>
+            <div className="row" style={styles.row} onClick={(e) => { if (shouldFocusRow(e)) focusRowInput(3); }}>
               <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>3</div>
               <div>Developing Online Course / Video Lecture and uploaded</div>
               <div style={{ color: "rgba(200,220,255,0.7)" }}>10 pts / video (cap 30)</div>
@@ -710,7 +750,7 @@ export default function SubmissionForm({
             </div>
 
             {/* Row 4 */}
-            <div className="row" style={styles.row} onClick={() => focusRowInput(4)}>
+            <div className="row" style={styles.row} onClick={(e) => { if (shouldFocusRow(e)) focusRowInput(4); }}>
               <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>4</div>
               <div>Implementation of Innovative teaching methodologies addressing SDGs</div>
               <div style={{ color: "rgba(200,220,255,0.7)" }}>4 pts / activity (cap 30)</div>
@@ -723,7 +763,7 @@ export default function SubmissionForm({
             </div>
 
             {/* Row 5 */}
-            <div className="row" style={styles.row} onClick={() => focusRowInput(5)}>
+            <div className="row" style={styles.row} onClick={(e) => { if (shouldFocusRow(e)) focusRowInput(5); }}>
               <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>5</div>
               <div>Conduct of VAC / Capsule courses / Training the students / Publications</div>
               <div style={{ color: "rgba(200,220,255,0.7)" }}>{isAPIII ? "1 pt/hr VAC; 4 pts achievement; 2 pts/publication — Academic aggregated" : "1 pt/hr VAC; 4 pts achievement; 2 pts/publication"}</div>
@@ -740,7 +780,7 @@ export default function SubmissionForm({
             <SectionHeader text="Research & Professional Development" />
 
             {/* Row 6 */}
-            <div className="row" style={styles.row} onClick={() => focusRowInput(6)}>
+            <div className="row" style={styles.row} onClick={(e) => { if (shouldFocusRow(e)) focusRowInput(6); }}>
               <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>6</div>
               <div>Publications</div>
               <div style={{ color: "rgba(200,220,255,0.7)" }}>{isAPIII ? "Publications - target 3 (Min 1 SCI) — total up to 80 pts" : "25 pts / publication (up to 75)"}</div>
@@ -753,7 +793,7 @@ export default function SubmissionForm({
             </div>
 
             {/* Row 7 */}
-            <div className="row" style={styles.row} onClick={() => focusRowInput(7)}>
+            <div className="row" style={styles.row} onClick={(e) => { if (shouldFocusRow(e)) focusRowInput(7); }}>
               <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>7</div>
               <div>Article Citation in WoS / Scopus Journals & Conferences</div>
               <div style={{ color: "rgba(200,220,255,0.7)" }}>{isAPIII ? "0.5 pt / citation (including KPRIET affiliated) — cap 20" : "1 pt / citation (cap 15)"}</div>
@@ -766,7 +806,7 @@ export default function SubmissionForm({
             </div>
 
             {/* Row 8 */}
-            <div className="row" style={styles.row} onClick={() => focusRowInput(8)}>
+            <div className="row" style={styles.row} onClick={(e) => { if (shouldFocusRow(e)) focusRowInput(8); }}>
               <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>8</div>
               <div>Consultancy Revenue (₹ / year)</div>
               <div style={{ color: "rgba(200,220,255,0.7)" }}>{isAPIII ? "Scaled to 25 pts (0..200k -> 0..25)" : "Scaled 0..200k → 0..20"}</div>
@@ -779,7 +819,7 @@ export default function SubmissionForm({
             </div>
 
             {/* Row 9 (two inputs: proposals count index=8, grants amount index=9) */}
-            <div className="row" style={styles.row} onClick={() => focusRowInput(9)}>
+            <div className="row" style={styles.row} onClick={(e) => { if (shouldFocusRow(e)) focusRowInput(9); }}>
               <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>9</div>
               <div>Sponsored grants / proposals</div>
               <div style={{ color: "rgba(200,220,255,0.7)" }}>{isAPIII ? "a) 10K-4L → up to 10 pts; b) 5 pts / proposal (cap 40) — combined cap 50" : "Combined scaled score (cap 40)"}</div>
@@ -813,7 +853,7 @@ export default function SubmissionForm({
             </div>
 
             {/* Row 10 */}
-            <div className="row" style={styles.row} onClick={() => focusRowInput(10)}>
+            <div className="row" style={styles.row} onClick={(e) => { if (shouldFocusRow(e)) focusRowInput(10); }}>
               <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>10</div>
               <div>Research Scholars Supervision</div>
               <div style={{ color: "rgba(200,220,255,0.7)" }}>{isAPIII ? "10 pts per PhD completion; 4 pts FT; 3 pts PT" : "Research visits / supervision mapping"}</div>
@@ -826,9 +866,9 @@ export default function SubmissionForm({
             </div>
 
             {/* Row 11 */}
-            <div className="row" style={styles.row} onClick={() => focusRowInput(11)}>
+            <div className="row" style={styles.row} onClick={(e) => { if (shouldFocusRow(e)) focusRowInput(11); }}>
               <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>11</div>
-              <div>Visit to Research Laboratories for Collaboration</div>
+              <div>  to Research Laboratories for Collaboration</div>
               <div style={{ color: "rgba(200,220,255,0.7)" }}>1 visit → 10 pts (cap 10)</div>
               <div style={{ display: "flex", justifyContent: "flex-end" }}><FileAttach row={11} /></div>
               <div style={{ textAlign: "right", color: "rgba(200,220,255,0.8)", fontWeight: 700 }}>10</div>
@@ -839,7 +879,7 @@ export default function SubmissionForm({
             </div>
 
             {/* Row 12 */}
-            <div className="row" style={styles.row} onClick={() => focusRowInput(12)}>
+            <div className="row" style={styles.row} onClick={(e) => { if (shouldFocusRow(e)) focusRowInput(12); }}>
               <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>12</div>
               <div>Completion of FDP / STTP / MOOC courses with proctored exam</div>
               <div style={{ color: "rgba(200,220,255,0.7)" }}>1 pt/day physical; 0.5 pt/day online; 4 pts/4w MOOC</div>
@@ -854,7 +894,7 @@ export default function SubmissionForm({
             </div>
 
             {/* Row 13 */}
-            <div className="row" style={styles.row} onClick={() => focusRowInput(13)}>
+            <div className="row" style={styles.row} onClick={(e) => { if (shouldFocusRow(e)) focusRowInput(13); }}>
               <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>13</div>
               <div>Number of Mandatory Training Programmes Completed</div>
               <div style={{ color: "rgba(200,220,255,0.7)" }}>1 Course → 10 pts</div>
@@ -871,7 +911,7 @@ export default function SubmissionForm({
             <SectionHeader text="Administration" />
 
             {/* Row 14 */}
-            <div className="row" style={styles.row} onClick={() => focusRowInput(14)}>
+            <div className="row" style={styles.row} onClick={(e) => { if (shouldFocusRow(e)) focusRowInput(14); }}>
               <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>14</div>
               <div>Convener / Coordinator / Guest lectures / Committees</div>
               <div style={{ color: "rgba(200,220,255,0.7)" }}>{isAPIII ? "Physical – 3 pts/day; Online – 2 pts/day; Guest/Webinars – 2 pts/day; Committee – 1 pt" : "Physical 3 pts/day; Online 2 pts/day; Guest 2 pts/hr; Committee 1 pt"}</div>
@@ -881,35 +921,36 @@ export default function SubmissionForm({
                 <NumericInput inputIndex={16} value={convenerDays} onChange={(v) => setConvenerDays(toInt(v))} min={0} placeholder="phys" />
                 <NumericInput inputIndex={17} value={convenerOnlineDays} onChange={(v) => setConvenerOnlineDays(toInt(v))} min={0} placeholder="online" />
                 <NumericInput inputIndex={18} value={guestHours} onChange={(v) => setGuestHours(toInt(v))} min={0} placeholder="guest hrs" />
+                <NumericInput inputIndex={19} value={committeeEvents} onChange={(v) => setCommitteeEvents(toInt(v))} min={0} placeholder="committee" />
                 <Badge>{Math.round(computed.perRow.admin.convenerMarks)}</Badge>
               </div>
             </div>
 
             {/* Row 15 */}
-            <div className="row" style={styles.row} onClick={() => focusRowInput(15)}>
+            <div className="row" style={styles.row} onClick={(e) => { if (shouldFocusRow(e)) focusRowInput(15); }}>
               <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>15</div>
               <div>National / Intl / Institute level events organized (a/b/c)</div>
               <div style={{ color: "rgba(200,220,255,0.7)" }}>a:3 pts / program, b:2 pts / program, c:1 pt / program</div>
               <div style={{ display: "flex", justifyContent: "flex-end" }}><FileAttach row={15} /></div>
               <div style={{ textAlign: "right", color: "rgba(200,220,255,0.8)", fontWeight: 700 }}>0</div>
               <div style={{ textAlign: "right", display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center" }}>
-                <NumericInput inputIndex={19} value={eventsA} onChange={(v) => setEventsA(toInt(v))} min={0} placeholder="a" />
-                <NumericInput inputIndex={20} value={eventsB} onChange={(v) => setEventsB(toInt(v))} min={0} placeholder="b" />
-                <NumericInput inputIndex={21} value={eventsC} onChange={(v) => setEventsC(toInt(v))} min={0} placeholder="c" />
+                <NumericInput inputIndex={20} value={eventsA} onChange={(v) => setEventsA(toInt(v))} min={0} placeholder="a" />
+                <NumericInput inputIndex={21} value={eventsB} onChange={(v) => setEventsB(toInt(v))} min={0} placeholder="b" />
+                <NumericInput inputIndex={22} value={eventsC} onChange={(v) => setEventsC(toInt(v))} min={0} placeholder="c" />
                 <Badge>{Math.round(computed.perRow.admin.eventsMarks)}</Badge>
               </div>
             </div>
 
             {/* Row 16 */}
-            <div className="row" style={styles.row} onClick={() => focusRowInput(16)}>
+            <div className="row" style={styles.row} onClick={(e) => { if (shouldFocusRow(e)) focusRowInput(16); }}>
               <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>16</div>
               <div>Institute & Dept. level responsibility</div>
               <div style={{ color: "rgba(200,220,255,0.7)" }}>Head:10 pts, Member:5 pts</div>
               <div style={{ display: "flex", justifyContent: "flex-end" }}><FileAttach row={16} /></div>
               <div style={{ textAlign: "right", color: "rgba(200,220,255,0.8)", fontWeight: 700 }}>30</div>
               <div style={{ textAlign: "right", display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center" }}>
-                <NumericInput inputIndex={22} value={headCount} onChange={(v) => setHeadCount(toInt(v))} min={0} placeholder="heads" />
-                <NumericInput inputIndex={23} value={memberCount} onChange={(v) => setMemberCount(toInt(v))} min={0} placeholder="members" />
+                <NumericInput inputIndex={23} value={headCount} onChange={(v) => setHeadCount(toInt(v))} min={0} placeholder="heads" />
+                <NumericInput inputIndex={24} value={memberCount} onChange={(v) => setMemberCount(toInt(v))} min={0} placeholder="members" />
                 <Badge>{Math.round(computed.perRow.admin.respMarks)}</Badge>
               </div>
             </div>
@@ -919,56 +960,56 @@ export default function SubmissionForm({
             <SectionHeader text="Outreach Activities" />
 
             {/* Row 17 */}
-            <div className="row" style={styles.row} onClick={() => focusRowInput(17)}>
+            <div className="row" style={styles.row} onClick={(e) => { if (shouldFocusRow(e)) focusRowInput(17); }}>
               <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>17</div>
               <div>Community Services / Addressing Rural Issues / ISR</div>
               <div style={{ color: "rgba(200,220,255,0.7)" }}>{isAPIII ? "10 pts / activity (cap 15)" : "10 pts / activity"}</div>
               <div style={{ display: "flex", justifyContent: "flex-end" }}><FileAttach row={17} /></div>
               <div style={{ textAlign: "right", color: "rgba(200,220,255,0.8)", fontWeight: 700 }}>{isAPIII ? 15 : 30}</div>
               <div style={{ textAlign: "right", display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center" }}>
-                <NumericInput inputIndex={24} value={outreachActivities} onChange={(v) => setOutreachActivities(toInt(v))} min={0} />
+                <NumericInput inputIndex={25} value={outreachActivities} onChange={(v) => setOutreachActivities(toInt(v))} min={0} />
                 <Badge>{Math.round(computed.perRow.outreach.communityMarks)}</Badge>
               </div>
             </div>
 
             {/* Row 18 */}
-            <div className="row" style={styles.row} onClick={() => focusRowInput(18)}>
+            <div className="row" style={styles.row} onClick={(e) => { if (shouldFocusRow(e)) focusRowInput(18); }}>
               <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>18</div>
               <div>Being a Resource person</div>
               <div style={{ color: "rgba(200,220,255,0.7)" }}>Outside 3 pt/hr; Inside 2 pt/hr</div>
               <div style={{ display: "flex", justifyContent: "flex-end" }}><FileAttach row={18} /></div>
               <div style={{ textAlign: "right", color: "rgba(200,220,255,0.8)", fontWeight: 700 }}>20</div>
               <div style={{ textAlign: "right", display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center" }}>
-                <NumericInput inputIndex={25} value={resourceOutsideHours} onChange={(v) => setResourceOutsideHours(toInt(v))} min={0} placeholder="outside hrs" />
-                <NumericInput inputIndex={26} value={resourceInsideHours} onChange={(v) => setResourceInsideHours(toInt(v))} min={0} placeholder="inside hrs" />
+                <NumericInput inputIndex={26} value={resourceOutsideHours} onChange={(v) => setResourceOutsideHours(toInt(v))} min={0} placeholder="outside hrs" />
+                <NumericInput inputIndex={27} value={resourceInsideHours} onChange={(v) => setResourceInsideHours(toInt(v))} min={0} placeholder="inside hrs" />
                 <Badge>{Math.round(computed.perRow.outreach.resourceMarks)}</Badge>
               </div>
             </div>
 
             {/* Row 19 */}
-            <div className="row" style={styles.row} onClick={() => focusRowInput(19)}>
+            <div className="row" style={styles.row} onClick={(e) => { if (shouldFocusRow(e)) focusRowInput(19); }}>
               <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>19</div>
               <div>Training in Industry / Research institutes (Days / Year)</div>
               <div style={{ color: "rgba(200,220,255,0.7)" }}>{isAPIII ? "Two weeks = full 20 pts (linear)" : "Two weeks = full 30 pts (linear)"}</div>
               <div style={{ display: "flex", justifyContent: "flex-end" }}><FileAttach row={19} /></div>
               <div style={{ textAlign: "right", color: "rgba(200,220,255,0.8)", fontWeight: 700 }}>{isAPIII ? 20 : 30}</div>
               <div style={{ textAlign: "right", display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center" }}>
-                <NumericInput inputIndex={27} value={trainingDays} onChange={(v) => setTrainingDays(toFloat(v))} min={0} />
+                <NumericInput inputIndex={28} value={trainingDays} onChange={(v) => setTrainingDays(toFloat(v))} min={0} />
                 <Badge>{Math.round(computed.perRow.outreach.trainingMarks)}</Badge>
               </div>
             </div>
 
             {/* Row 20 */}
-            <div className="row" style={styles.row} onClick={() => focusRowInput(20)}>
+            <div className="row" style={styles.row} onClick={(e) => { if (shouldFocusRow(e)) focusRowInput(20); }}>
               <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>20</div>
               <div>Awards & Recognition</div>
               <div style={{ color: "rgba(200,220,255,0.7)" }}>Awards 5 pts each; Editorial 4 pts; Review 1 pt</div>
               <div style={{ display: "flex", justifyContent: "flex-end" }}><FileAttach row={20} /></div>
               <div style={{ textAlign: "right", color: "rgba(200,220,255,0.8)", fontWeight: 700 }}>20</div>
               <div style={{ textAlign: "right", display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center" }}>
-                <NumericInput inputIndex={28} value={awardsCount} onChange={(v) => setAwardsCount(toInt(v))} min={0} placeholder="awards" />
-                <NumericInput inputIndex={29} value={editorialCount} onChange={(v) => setEditorialCount(toInt(v))} min={0} placeholder="editorial" />
-                <NumericInput inputIndex={30} value={reviewsCount} onChange={(v) => setReviewsCount(toInt(v))} min={0} placeholder="reviews" />
+                <NumericInput inputIndex={29} value={awardsCount} onChange={(v) => setAwardsCount(toInt(v))} min={0} placeholder="awards" />
+                <NumericInput inputIndex={30} value={editorialCount} onChange={(v) => setEditorialCount(toInt(v))} min={0} placeholder="editorial" />
+                <NumericInput inputIndex={31} value={reviewsCount} onChange={(v) => setReviewsCount(toInt(v))} min={0} placeholder="reviews" />
                 <Badge>{Math.round(computed.perRow.outreach.awardsTotal)}</Badge>
               </div>
             </div>
