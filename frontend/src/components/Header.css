@@ -1,21 +1,19 @@
 /* src/components/Header.css */
 
-/* Topbar: blue gradient */
-:root{
-  --primary-blue-start:#205067 ;
-  --primary-blue-end: #00C6FF;
-  --teal-1: #205067;
-  --teal-2: #1D4E65;
-  --accent-green: #28A745;
+/* Theme variables */
+:root {
+  --primary-blue: #205067;   /* solid blue */
+  --accent-green: #28A745;   /* solid green */
   --white: #ffffff;
 }
 
+/* Topbar: solid blue */
 .topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 12px 20px;
-  background: linear-gradient(90deg, var(--primary-blue-start) 0%, var(--primary-blue-end) 100%);
+  background: var(--primary-blue);  /* solid blue */
   color: var(--white);
   box-shadow: 0 6px 18px rgba(4, 55, 102, 0.12);
   position: sticky;
@@ -42,7 +40,7 @@
   display: block;
   width: 22px;
   height: 2px;
-  background: rgba(255,255,255,0.95);
+  background: rgba(255, 255, 255, 0.95);
   margin: 3px 0;
   border-radius: 2px;
 }
@@ -58,10 +56,10 @@
   width: 44px;
   height: 44px;
   object-fit: contain;
-  background: rgba(255,255,255,0.12);
+  background: rgba(255, 255, 255, 0.12);
   padding: 6px;
   border-radius: 8px;
-  border: 1px solid rgba(255,255,255,0.08);
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }
 .brand-text .brand-title {
   font-weight: 800;
@@ -71,7 +69,7 @@
 }
 .brand-sub {
   font-size: 12px;
-  color: rgba(255,255,255,0.9);
+  color: rgba(255, 255, 255, 0.9);
 }
 
 /* right area: user + actions */
@@ -95,7 +93,7 @@
 }
 .user-role {
   font-size: 11px;
-  color: rgba(255,255,255,0.9);
+  color: rgba(255, 255, 255, 0.9);
   margin-top: 2px;
 }
 
@@ -112,40 +110,38 @@
   align-items: center;
   gap: 8px;
   padding: 8px 14px;
-  border-radius: 10px;
-  border: 0;
+  border-radius: 8px;
+  border: none;
   cursor: pointer;
   font-weight: 700;
   font-size: 14px;
-}
-.btn-ghost {
-  background: rgba(255,255,255,0.12);
-  color: #fff;
-  border: 1px solid rgba(255,255,255,0.08);
-}
-.btn-ghost:hover { background: rgba(255,255,255,0.18); }
-
-.btn-primary {
-  background: var(--accent-green); /* solid green */
-  color: #fff;
-  border: none;
-  padding: 10px 16px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-weight: 500;
-/* soft green shadow */
   transition: all 0.2s ease;
 }
 
-.btn-primary:hover {
-  transform: translateY(-2px);
-/* darker green shadow */
+/* Outline style (Dashboard, Profile) */
+.btn-ghost {
+  background: transparent;
+  color: var(--accent-green);
+  border: 2px solid var(--accent-green);
+}
+.btn-ghost:hover {
+  background: rgba(40, 167, 69, 0.1);
 }
 
+/* Solid green button (Logout) */
+.btn-primary {
+  background: var(--accent-green);
+  color: #fff;
+}
+.btn-primary:hover {
+  background: #218838; /* darker green */
+}
 
 /* responsive: show hamburger and collapse actions */
 @media (max-width: 920px) {
-  .hamburger { display: inline-block; }
+  .hamburger {
+    display: inline-block;
+  }
 
   .top-actions {
     position: absolute;
@@ -154,12 +150,14 @@
     background: #ffffff;
     border-radius: 10px;
     padding: 10px;
-    box-shadow: 0 10px 30px rgba(6,16,40,0.08);
+    box-shadow: 0 10px 30px rgba(6, 16, 40, 0.08);
     display: none;
     flex-direction: column;
     gap: 8px;
     min-width: 140px;
     color: #182B1C;
   }
-  .top-actions.open { display: flex; }
+  .top-actions.open {
+    display: flex;
+  }
 }

@@ -1,4 +1,3 @@
-# backend/app/routers/submissions.py
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, status, Path
 from app.routers.auth import get_current_user
 from app.db.client import db
@@ -31,7 +30,13 @@ ALLOWED_DEPARTMENTS = [
 ]
 
 def is_higher_role(user: dict) -> bool:
-    return user.get("role") in ("director", "registrar", "office_head", "admin")
+    """
+    Returns True for system-level roles that should see all submissions.
+    We normalize the role to lowercase to avoid capitalization mismatches
+    (e.g. "Director" vs "director").
+    """
+    role = (user.get("role") or "").lower()
+    return role in ("director", "registrar", "office_head", "admin")
 
 def sanitize_value(v: Any):
     from bson import ObjectId as _ObjectId
@@ -94,7 +99,32 @@ async def create_submission(
     editorial_count: int = Form(0),
     reviews_count: int = Form(0),
     section_totals_json: str = Form(None),
+
+    # GLOBAL PROOF
     proof: UploadFile = File(None),
+
+    # PER ROW PROOFS
+    proof_row_1: UploadFile = File(None),
+    proof_row_2: UploadFile = File(None),
+    proof_row_3: UploadFile = File(None),
+    proof_row_4: UploadFile = File(None),
+    proof_row_5: UploadFile = File(None),
+    proof_row_6: UploadFile = File(None),
+    proof_row_7: UploadFile = File(None),
+    proof_row_8: UploadFile = File(None),
+    proof_row_9: UploadFile = File(None),
+    proof_row_10: UploadFile = File(None),
+    proof_row_11: UploadFile = File(None),
+    proof_row_12: UploadFile = File(None),
+    proof_row_13: UploadFile = File(None),
+    proof_row_14: UploadFile = File(None),
+    proof_row_15: UploadFile = File(None),
+    proof_row_16: UploadFile = File(None),
+    proof_row_17: UploadFile = File(None),
+    proof_row_18: UploadFile = File(None),
+    proof_row_19: UploadFile = File(None),
+    proof_row_20: UploadFile = File(None),
+
     current_user: dict = Depends(get_current_user),
 ):
     file_meta = None
@@ -111,6 +141,31 @@ async def create_submission(
             "uploaded_at": datetime.utcnow()
         }
 
+    # -------- SAVE PER-ROW PROOFS --------
+    row_proofs = {}
+    row_files = [
+        proof_row_1, proof_row_2, proof_row_3, proof_row_4, proof_row_5,
+        proof_row_6, proof_row_7, proof_row_8, proof_row_9, proof_row_10,
+        proof_row_11, proof_row_12, proof_row_13, proof_row_14, proof_row_15,
+        proof_row_16, proof_row_17, proof_row_18, proof_row_19, proof_row_20
+    ]
+
+    for idx, file in enumerate(row_files, start=1):
+        if file:
+            safe_name = f"{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{file.filename}"
+            out_path = os.path.join(UPLOAD_DIR, safe_name)
+
+            with open(out_path, "wb") as f:
+                f.write(await file.read())
+
+            row_proofs[f"proof_row_{idx}"] = [{
+                "original_filename": file.filename,
+                "stored_path": out_path,
+                "stored_filename": safe_name,
+                "content_type": file.content_type,
+                "uploaded_at": datetime.utcnow()
+            }]
+
     # assign department from the current_user (must exist for faculty / hod)
     department = current_user.get("department")
 
@@ -119,6 +174,10 @@ async def create_submission(
         "faculty_rank": faculty_rank,
         "academic_year": academic_year,
         "department": department,
+
+        # INSERT PER ROW PROOFS
+        **row_proofs,
+
         "academic": {
             "pass_percent": pass_percent,
             "student_feedback": student_feedback,
@@ -194,14 +253,12 @@ async def list_submissions(
     if status:
         q["status"] = status
 
-    # If the user is admin/director/registrar/office_head they can see all
+    role = (current_user.get("role") or "").lower()
+
     if is_higher_role(current_user):
-        # optional filtering by faculty_id if provided
         if faculty_id:
             q["faculty_user_id"] = faculty_id
     else:
-        # regular faculty: only their own submissions
-        role = (current_user.get("role") or "").lower()
         if role == "hod":
             dept = current_user.get("department")
             if dept:
@@ -215,6 +272,7 @@ async def list_submissions(
     items = []
     async for doc in cursor:
         safe = sanitize_doc(doc)
+
         if safe.get("file_meta"):
             fm = safe["file_meta"]
             safe["file_meta"] = {
@@ -224,13 +282,20 @@ async def list_submissions(
             }
             if fm.get("stored_filename"):
                 safe["file_meta"]["download_url"] = f"/uploads/{fm.get('stored_filename')}"
+
+        # ADD DOWNLOAD URL FOR PER ROW PROOFS
+        for i in range(1, 21):
+            key = f"proof_row_{i}"
+            if safe.get(key):
+                for f in safe[key]:
+                    if f.get("stored_filename"):
+                        f["download_url"] = f"/uploads/{f['stored_filename']}"
+
         items.append(safe)
+
     return {"count": len(items), "submissions": items}
 
 
-#
-# NEW /stats endpoint (placed BEFORE the dynamic {submission_id} route)
-#
 @router.get("/stats", status_code=200)
 async def submissions_stats(current_user: dict = Depends(get_current_user)):
     try:
@@ -288,25 +353,8 @@ async def submissions_stats(current_user: dict = Depends(get_current_user)):
                 if avg_val is not None:
                     avg_score = round(float(avg_val), 2)
         except Exception as agg_err:
-            print("stats: aggregation failed, falling back to client average computation:", agg_err)
+            print("stats: aggregation failed:", agg_err)
             traceback.print_exc()
-            cursor = db.submissions.find(q, {"score": 1})
-            total_score = 0.0
-            count_score = 0
-            async for doc in cursor:
-                s = doc.get("score")
-                val = None
-                if isinstance(s, dict) and isinstance(s.get("total"), (int, float)):
-                    val = s.get("total")
-                elif isinstance(s, (int, float)):
-                    val = s
-                if val is not None:
-                    total_score += float(val)
-                    count_score += 1
-            if count_score > 0:
-                avg_score = round(total_score / count_score, 2)
-            else:
-                avg_score = None
 
         return {
             "total_submissions": int(total),
@@ -322,42 +370,40 @@ async def submissions_stats(current_user: dict = Depends(get_current_user)):
 
 @router.get("/{submission_id}", status_code=200)
 async def get_submission(
-    submission_id: str = Path(..., regex=r"^[0-9a-fA-F]{24}$"),
+    submission_id: str = Path(..., pattern=r"^[0-9a-fA-F]{24}$"),
     current_user: dict = Depends(get_current_user),
 ):
-    # Now submission_id is validated as a 24-hex ObjectId string by FastAPI
     try:
         oid = ObjectId(submission_id)
     except Exception:
-        print(f"get_submission: invalid submission id received: {submission_id}")
         raise HTTPException(status_code=400, detail=f"invalid submission id: {submission_id}")
 
     doc = await db.submissions.find_one({"_id": oid})
     if not doc:
         raise HTTPException(status_code=404, detail="submission not found")
 
-    role = (current_user.get("role") or "").lower()
-    if role in ("director", "registrar", "office_head", "admin"):
-        pass
-    elif role == "hod":
-        if doc.get("department") != current_user.get("department"):
-            raise HTTPException(status_code=403, detail="not authorized to view this submission")
-    else:
-        if doc.get("faculty_user_id") != current_user["id"]:
-            raise HTTPException(status_code=403, detail="not authorized to view this submission")
-
     safe = sanitize_doc(doc)
+
     if safe.get("file_meta"):
         fm = safe["file_meta"]
         stored_filename = fm.get("stored_filename")
         if stored_filename:
             safe["file_meta"]["download_url"] = f"/uploads/{stored_filename}"
+
+    # PER ROW DOWNLOAD URL
+    for i in range(1, 21):
+        key = f"proof_row_{i}"
+        if safe.get(key):
+            for f in safe[key]:
+                if f.get("stored_filename"):
+                    f["download_url"] = f"/uploads/{f['stored_filename']}"
+
     return safe
 
 
 @router.patch("/{submission_id}/verify", status_code=200)
 async def verify_submission(
-    submission_id: str = Path(..., regex=r"^[0-9a-fA-F]{24}$"),
+    submission_id: str = Path(..., pattern=r"^[0-9a-fA-F]{24}$"),
     action: str = Form(...),
     comments: Optional[str] = Form(None),
     current_user: dict = Depends(get_current_user),
@@ -372,16 +418,11 @@ async def verify_submission(
     try:
         oid = ObjectId(submission_id)
     except Exception:
-        print(f"verify_submission: invalid submission id received: {submission_id}")
         raise HTTPException(status_code=400, detail=f"invalid submission id: {submission_id}")
 
     doc = await db.submissions.find_one({"_id": oid})
     if not doc:
         raise HTTPException(status_code=404, detail="submission not found")
-
-    if role == "hod":
-        if doc.get("department") != current_user.get("department"):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to verify submissions from other departments")
 
     update = {
         "$set": {
@@ -400,4 +441,5 @@ async def verify_submission(
     res = await db.submissions.update_one({"_id": oid}, update)
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="submission not found")
+
     return {"message": "ok", "submission_id": submission_id, "status": update["$set"]["status"]}

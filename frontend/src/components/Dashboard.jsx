@@ -1,15 +1,16 @@
-// src/components/Dashboard.jsx
+/* src/components/Dashboard.jsx
+   Restored original Dashboard content (as previously provided).
+*/
 import React, { useEffect, useState } from "react";
 import SubmissionForm from "../SubmissionForm";
 import SubmissionsList from "../SubmissionsList";
+import ReportsAnalytics from "./ReportsAnalytics"; // <-- shows AI feedback & analytics
 import "./Dashboard.css";
 
 /**
- * Updated Dashboard.jsx
- * - more resilient auth header extraction (token keys)
- * - includes credentials: 'include' (in case backend uses cookie-based auth)
- * - detailed logging of response body when non-200 (helpful for debugging 400)
- * - user-friendly statsError with guidance
+ * Final Dashboard.jsx (updated)
+ * - For admin-like roles the "All Department Submissions" action is placed before "AI Insights Dashboard"
+ * - Keeps "My Submissions" for HOD, department-locked view for HOD, and admin actions intact
  */
 
 function StatCard({ title, value, icon }) {
@@ -26,15 +27,13 @@ function StatCard({ title, value, icon }) {
   );
 }
 
-/** try to locate a token in the common localStorage keys */
+// --- helper functions ---
 function findAuthToken() {
-  // try several keys that might be used in your app
   const keys = ["token", "access", "access_token", "auth_token"];
   for (const k of keys) {
     const v = localStorage.getItem(k);
     if (v) return v;
   }
-  // fallback: maybe app stored whole user object with token
   try {
     const u = localStorage.getItem("user");
     if (u) {
@@ -42,10 +41,14 @@ function findAuthToken() {
       if (parsed?.token) return parsed.token;
       if (parsed?.access_token) return parsed.access_token;
     }
-  } catch (e) {
-    // ignore JSON parse errors
+  } catch {
+    return null;
   }
   return null;
+}
+
+function getUserId(user) {
+  return user?._id || user?.id || user?.email || null;
 }
 
 export default function Dashboard({ apiBase = "http://127.0.0.1:8000", user }) {
@@ -55,7 +58,7 @@ export default function Dashboard({ apiBase = "http://127.0.0.1:8000", user }) {
   const [loadingStats, setLoadingStats] = useState(false);
   const [statsError, setStatsError] = useState("");
 
-  // helper to create headers (bearer token if found)
+  // Build headers for backend
   function buildHeaders() {
     const token = findAuthToken();
     const headers = { Accept: "application/json" };
@@ -67,67 +70,37 @@ export default function Dashboard({ apiBase = "http://127.0.0.1:8000", user }) {
     setLoadingStats(true);
     setStatsError("");
     try {
-      const headers = buildHeaders();
-
-      // make the request and include credentials in case the backend uses cookie auth
       const res = await fetch(`${apiBase.replace(/\/$/, "")}/api/submissions/stats`, {
-        method: "GET",
-        headers,
+        headers: buildHeaders(),
         credentials: "include",
       });
 
-      // try to parse JSON body if present (for both ok and error cases)
-      let body = null;
+      let data;
       try {
-        body = await res.json().catch(() => null);
-      } catch (e) {
-        // non-json body fallback
-        try {
-          body = await res.text();
-        } catch (err) {
-          body = null;
-        }
+        data = await res.json();
+      } catch {
+        data = null;
       }
 
       if (!res.ok) {
-        // helpful console logging for debugging: status + body
-        console.error("GET /api/submissions/stats failed:", res.status, body);
-        // Provide helpful message depending on status
-        if (res.status === 400) {
-          setStatsError(
-            "Bad request while fetching stats (400). Check backend logs — often caused by missing/invalid auth or missing query params."
-          );
-        } else if (res.status === 401 || res.status === 403) {
-          setStatsError(
-            "Not authorized (401/403). Please sign in again. If you recently logged in, ensure your token is stored in localStorage under 'token' or 'access'."
-          );
+        console.error("Stats fetch error:", res.status, data);
+        if (res.status === 401 || res.status === 403) {
+          setStatsError("Unauthorized. Please log in again.");
         } else {
-          setStatsError(
-            `Failed to load stats (${res.status}). See console for server response.`
-          );
+          setStatsError(`Failed to load stats (${res.status}).`);
         }
-        // optional: display server-provided message (if present)
-        if (body && typeof body === "object" && body.detail) {
-          // append backend detail for convenience
-          setStatsError((prev) => prev + " — " + body.detail);
-        }
-        // reset stats to safe defaults
-        setStats({ total: 0, avgScore: "—", pending: 0, approved: 0 });
         return;
       }
 
-      // success
-      const d = body || {};
       setStats({
-        total: d.total_submissions ?? 0,
-        avgScore: d.avg_score ? `${d.avg_score} / 100` : "—",
-        pending: d.pending_reviews ?? 0,
-        approved: d.approved ?? 0,
+        total: data.total_submissions ?? 0,
+        avgScore: data.avg_score ? `${data.avg_score} / 100` : "—",
+        pending: data.pending_reviews ?? 0,
+        approved: data.approved ?? 0,
       });
     } catch (err) {
-      console.error("loadStats: network or parsing error:", err);
-      setStatsError("Network or parsing error while loading stats. Check console for details.");
-      setStats({ total: 0, avgScore: "—", pending: 0, approved: 0 });
+      console.error("loadStats error:", err);
+      setStatsError("Error fetching statistics. See console for details.");
     } finally {
       setLoadingStats(false);
     }
@@ -138,48 +111,63 @@ export default function Dashboard({ apiBase = "http://127.0.0.1:8000", user }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
+  // normalize role (lowercase)
   const role = (user?.role || "faculty").toString().toLowerCase();
 
-  const actions =
-    role === "faculty"
-      ? [
-          { label: "New Form", view: "new-form", style: "mix" },
-          { label: "My Submissions", view: "my-submissions", style: "green" },
-          { label: "Upload Proofs", view: "upload-proofs", style: "mix" },
-          { label: "AI Feedback", view: "ai-feedback", style: "green" },
-        ]
-      : role === "hod"
-      ? [
-          { label: "New Form", view: "new-form", style: "mix" },
-          { label: "My Submissions", view: "my-submissions", style: "green" },
-          { label: "Department Submissions", view: "department-submissions", style: "mix" },
-          { label: "Department AI Analysis", view: "department-ai", style: "green" },
-        ]
-      : [
-          { label: "Department Submissions", view: "department-submissions", style: "mix" },
-          { label: "AI Insights Dashboard", view: "ai-insights", style: "green" },
-          { label: "Reports & Analytics", view: "reports", style: "mix" },
-          { label: "User Management", view: "user-management", style: "green" },
-        ];
+  // Higher-level role flags
+  const IS_HOD = role === "hod";
+  const IS_FACULTY = role === "faculty";
+  const IS_ADMIN_LIKE = ["registrar", "admin", "director", "office_head"].includes(role);
+
+  // --- actions / buttons
+  // For admin-like: put "All Department Submissions" before "AI Insights Dashboard"
+  const actions = IS_FACULTY
+    ? [
+        { label: "New Form", view: "new-form", style: "mix" },
+        { label: "My Submissions", view: "my-submissions", style: "green" },
+        { label: "Upload Proofs", view: "upload-proofs", style: "mix" },
+        { label: "AI Feedback", view: "ai-feedback", style: "green" },
+      ]
+    : IS_HOD
+    ? [
+        { label: "New Form", view: "new-form", style: "mix" },
+        { label: "My Submissions", view: "my-submissions", style: "green" }, // HOD should see own submissions
+        { label: "Department Submissions", view: "department-submissions", style: "mix" },
+        { label: "Department AI Analysis", view: "department-ai", style: "green" },
+      ]
+    : // admin-like: moved "All Department Submissions" first
+      [
+        { label: "All Department Submissions", view: "all-department-submissions", style: "mix" },
+        { label: "AI Insights Dashboard", view: "ai-insights", style: "green" },
+        { label: "Reports & Analytics", view: "reports", style: "mix" },
+        { label: "User Management", view: "user-management", style: "green" },
+      ];
 
   const buttonClass = (s) =>
-    s === "blue" ? "action-btn btn-gradient-blue" : s === "green" ? "action-btn btn-gradient-green" : "action-btn btn-gradient-mix";
+    s === "green"
+      ? "action-btn btn-gradient-green"
+      : s === "mix"
+      ? "action-btn btn-gradient-mix"
+      : "action-btn btn-gradient-blue";
 
+  const userId = getUserId(user);
+
+  // --- UI ---
   return (
     <div className="dashboard-root">
       <div className="dashboard-header">
         <div className="greeting">
           <h1>
-            {role === "faculty"
+            {IS_FACULTY
               ? `Welcome, ${user?.name ?? "Faculty"}`
-              : role === "hod"
+              : IS_HOD
               ? `${user?.department ?? "Department"} • HOD Dashboard`
-              : `${user?.university ?? "University"} • Admin Dashboard`}
+              : "Admin Dashboard"}
           </h1>
           <p className="subtitle">
-            {role === "faculty"
+            {IS_FACULTY
               ? `Academic Year ${user?.academic_year ?? ""}`
-              : role === "hod"
+              : IS_HOD
               ? `HOD: ${user?.name ?? ""}`
               : `Registrar / Admin: ${user?.name ?? ""}`}
           </p>
@@ -189,28 +177,28 @@ export default function Dashboard({ apiBase = "http://127.0.0.1:8000", user }) {
       <div className="stats-row">
         <StatCard title="Total Submissions" value={loadingStats ? "…" : stats.total} icon={<span className="dot blue" />} />
         <StatCard title="Average AI Score" value={loadingStats ? "…" : stats.avgScore} icon={<span className="dot teal" />} />
-        <StatCard title={role === "faculty" ? "Pending Reviews" : "Pending Approvals"} value={loadingStats ? "…" : stats.pending} icon={<span className="dot amber" />} />
-        <StatCard title={role === "faculty" ? "Approved Submissions" : "Approved KPI Forms"} value={loadingStats ? "…" : stats.approved} icon={<span className="dot green" />} />
+        <StatCard title="Pending Reviews" value={loadingStats ? "…" : stats.pending} icon={<span className="dot amber" />} />
+        <StatCard title="Approved" value={loadingStats ? "…" : stats.approved} icon={<span className="dot green" />} />
       </div>
 
-      {statsError && <div className="form-msg err" role="status">{statsError}</div>}
+      {statsError && <div className="form-msg err">{statsError}</div>}
 
+      {/* Quick Action Buttons */}
       <div className="quick-actions-large">
         {actions.map((a) => (
           <button
             key={a.view}
             className={buttonClass(a.style)}
-            onClick={() => {
-              if (a.view === "new-form") setShowNewForm(true);
-              else setView(a.view);
-            }}
+            onClick={() => (a.view === "new-form" ? setShowNewForm(true) : setView(a.view))}
           >
             {a.label}
           </button>
         ))}
       </div>
 
+      {/* Main Panel */}
       <div className="panel">
+        {/* My Submissions (faculty or HOD) */}
         {view === "my-submissions" && (
           <div className="panel-content">
             <div className="panel-title">My Submissions</div>
@@ -218,50 +206,55 @@ export default function Dashboard({ apiBase = "http://127.0.0.1:8000", user }) {
           </div>
         )}
 
+        {/* Department Submissions: HOD locked to their department */}
         {view === "department-submissions" && (
           <div className="panel-content">
             <div className="panel-title">Department Submissions</div>
+            <SubmissionsList apiBase={apiBase} user={user} fixedDepartment={user?.department ?? ""} />
+          </div>
+        )}
 
-            {role === "hod" ? (
-              <SubmissionsList apiBase={apiBase} user={user} fixedDepartment={user?.department ?? ""} />
-            ) : (
-              <SubmissionsList apiBase={apiBase} showDeptSelect={true} />
-            )}
+        {/* Admin/Registrar: show department selector so they can choose any department */}
+        {view === "all-department-submissions" && (
+          <div className="panel-content">
+            <div className="panel-title">All Department Submissions</div>
+            <SubmissionsList apiBase={apiBase} user={user} showDeptSelect />
           </div>
         )}
 
         {view === "upload-proofs" && (
           <div className="panel-content">
             <div className="panel-title">Upload Proofs</div>
-            <div className="placeholder">Upload UI coming soon.</div>
+            <div className="placeholder">Upload proof interface coming soon.</div>
           </div>
         )}
 
+        {/* AI Feedback Tab */}
         {view === "ai-feedback" && (
           <div className="panel-content">
             <div className="panel-title">AI Feedback</div>
-            <div className="placeholder">AI insights will appear here.</div>
+            {userId ? <ReportsAnalytics apiBase={apiBase} userId={userId} /> : <div className="placeholder">Sign in to view AI feedback and analytics.</div>}
           </div>
         )}
 
         {view === "department-ai" && (
           <div className="panel-content">
             <div className="panel-title">Department AI Analysis</div>
-            <div className="placeholder">Department-level AI analytics will appear here.</div>
+            <div className="placeholder">Department analytics will appear here.</div>
           </div>
         )}
 
         {view === "ai-insights" && (
           <div className="panel-content">
             <div className="panel-title">AI Insights Dashboard</div>
-            <div className="placeholder">Global AI analytics will appear here.</div>
+            <div className="placeholder">Institution-level AI insights coming soon.</div>
           </div>
         )}
 
         {view === "reports" && (
           <div className="panel-content">
             <div className="panel-title">Reports & Analytics</div>
-            <div className="placeholder">Exportable reports coming soon.</div>
+            {userId ? <ReportsAnalytics apiBase={apiBase} userId={userId} /> : <div className="placeholder">Sign in to view analytics reports.</div>}
           </div>
         )}
 
@@ -273,6 +266,7 @@ export default function Dashboard({ apiBase = "http://127.0.0.1:8000", user }) {
         )}
       </div>
 
+      {/* Show KPI Submission Form */}
       {showNewForm && (
         <SubmissionForm
           apiBase={apiBase}

@@ -1,15 +1,20 @@
 // src/SubmissionForm.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 /*
-  SubmissionForm
-  - Shows full 20 activities in a table-like layout
-  - computeMarks() returns perRow and totals
-  - on submit, POST to `${apiBase}/api/submissions/` with section_totals_json and file (proof)
+  SubmissionForm (supports new/edit flows + multiple-file uploads)
+  Props:
+    - apiBase (string) default "http://127.0.0.1:8000"
+    - submission (object|null) optional existing submission to edit
+    - editable (bool) whether fields are editable (default true)
+    - onSubmitted (fn) called after successful create/update
+    - onCancel (fn) cancel/close form
 */
 
 export default function SubmissionForm({
   apiBase = "http://127.0.0.1:8000",
+  submission = null,
+  editable = true,
   onSubmitted = () => {},
   onCancel = () => {},
 }) {
@@ -59,10 +64,18 @@ export default function SubmissionForm({
   const [editorialCount, setEditorialCount] = useState(0);
   const [reviewsCount, setReviewsCount] = useState(0);
 
-  // file upload
-  const [proofFile, setProofFile] = useState(null);
+  // global file upload: supports multiple files (new uploads)
+  const [proofFiles, setProofFiles] = useState([]); // array of File
   const [dragOver, setDragOver] = useState(false);
 
+  // per-activity files keyed by row number (1..20) -> array of File (new uploads)
+  const [activityFiles, setActivityFiles] = useState({});
+
+  // existing proofs from submission (read-only metadata; usually objects {name, url, id})
+  const [existingProofs, setExistingProofs] = useState([]); // global
+  const [existingActivityProofs, setExistingActivityProofs] = useState({}); // { row: [ {name,url,id}, ... ] }
+
+  // auth token
   const token = localStorage.getItem("token");
 
   // helpers
@@ -76,38 +89,90 @@ export default function SubmissionForm({
     return Number.isFinite(n) && !Number.isNaN(n) ? n : 0;
   };
 
-  // compute marks - same algorithm as prior code
-  function computeMarks() {
-    const passPct = toFloat(passPercent);
-    let passMarks = passPct > 81 ? ((passPct - 81) / (95 - 81)) * 30 : 0;
-    passMarks = clamp(passMarks, 0, 30);
+  const NUM_INPUTS = 31;
+  const inputRefs = useRef(Array.from({ length: NUM_INPUTS }, () => null));
 
-    const studFb = toFloat(studentFeedback);
-    let fbMarks = studFb > 3.1 ? ((studFb - 3.1) / (4.5 - 3.1)) * 30 : 0;
-    fbMarks = clamp(fbMarks, 0, 30);
+  // Determine rubric variant: AP III or default
+  const isAPIII = (facultyRank || "").toString().toUpperCase().includes("AP III") || facultyRank === "AP III";
+
+  const MAXS = isAPIII
+    ? { academic: 125, research: 225, admin: 75, outreach: 75, grand: 500 }
+    : { academic: 150, research: 200, admin: 50, outreach: 100, grand: 500 };
+
+  function computeMarks() {
+    // Academic
+    let passMarks = 0;
+    if (isAPIII) {
+      const pct = toFloat(passPercent);
+      passMarks = pct > 81 ? ((pct - 81) / (95 - 81)) * 20 : 0;
+      passMarks = clamp(passMarks, 0, 20);
+    } else {
+      const pct = toFloat(passPercent);
+      passMarks = pct > 80 ? ((pct - 80) / (95 - 80)) * 30 : 0;
+      passMarks = clamp(passMarks, 0, 30);
+    }
+
+    let fbMarks = 0;
+    if (isAPIII) {
+      const fb = toFloat(studentFeedback);
+      fbMarks = fb > 3.1 ? ((fb - 3.1) / (4.5 - 3.1)) * 20 : 0;
+      fbMarks = clamp(fbMarks, 0, 20);
+    } else {
+      const fb = toFloat(studentFeedback);
+      fbMarks = fb > 3.0 ? ((fb - 3.0) / (4.5 - 3.0)) * 30 : 0;
+      fbMarks = clamp(fbMarks, 0, 30);
+    }
 
     const videosMarks = clamp(10 * toInt(onlineVideos), 0, 30);
     const sdgMarks = clamp(4 * toInt(sdgActivities), 0, 30);
     const vacMarks = clamp(1 * toInt(vacHours), 0, 9999);
 
-    const academicTotal = clamp(passMarks + fbMarks + videosMarks + sdgMarks + vacMarks, 0, 150);
+    const academicRaw = passMarks + fbMarks + videosMarks + sdgMarks + vacMarks;
+    const academicTotal = clamp(academicRaw, 0, MAXS.academic);
 
-    const pubsMarks = clamp(25 * toInt(publications), 0, 75);
-    const citationsMarks = clamp(1 * toInt(citations), 0, 15);
-    const consultancyMarks = clamp(toFloat(consultancyRevenue) > 0 ? (toFloat(consultancyRevenue) / 200000) * 20 : 0, 0, 20);
+    // Research
+    let pubsMarks = 0;
+    let citationsMarks = 0;
+    let consultancyMarks = 0;
+    let proposalsMarks = 0;
+    let grantsAmountMarks = 0;
+    let sponsoredCombined = 0;
+    let researchVisitsMarks = 0;
+    let membershipsMarks = 0;
+    let fdpMarks = 0;
+    let mandatoryMarks = 0;
 
-    const proposalsMarks = clamp(5 * toInt(sponsoredGrantsCount), 0, 15);
-    const grantsAmountMarks = clamp(
-      toFloat(sponsoredGrantsAmount) > 10000 ? ((toFloat(sponsoredGrantsAmount) - 10000) / (200000 - 10000)) * 25 : 0,
-      0,
-      25
-    );
-    const sponsoredCombined = clamp(proposalsMarks + grantsAmountMarks, 0, 40);
-
-    const researchVisitsMarks = clamp(10 * toInt(researchVisits), 0, 10);
-    const membershipsMarks = clamp(10 * toInt(membershipsCount), 0, 10);
-    const fdpMarks = clamp(1 * toFloat(fdpDaysPhys) + 0.5 * toFloat(fdpDaysOnline) + 4 * toInt(mooc4w), 0, 20);
-    const mandatoryMarks = clamp(10 * toInt(mandatoryCourses), 0, 10);
+    if (isAPIII) {
+      pubsMarks = clamp((80 / 3) * toInt(publications), 0, 80);
+      citationsMarks = clamp(0.5 * toInt(citations), 0, 20);
+      consultancyMarks = clamp(toFloat(consultancyRevenue) > 0 ? (toFloat(consultancyRevenue) / 200000) * 25 : 0, 0, 25);
+      proposalsMarks = clamp(5 * toInt(sponsoredGrantsCount), 0, 40);
+      grantsAmountMarks = clamp(
+        toFloat(sponsoredGrantsAmount) > 10000 ? ((toFloat(sponsoredGrantsAmount) - 10000) / (400000 - 10000)) * 10 : 0,
+        0,
+        10
+      );
+      sponsoredCombined = clamp(proposalsMarks + grantsAmountMarks, 0, 50);
+      researchVisitsMarks = clamp(10 * toInt(researchVisits), 0, 10);
+      membershipsMarks = clamp(10 * toInt(membershipsCount), 0, 10);
+      fdpMarks = clamp(1 * toFloat(fdpDaysPhys) + 0.5 * toFloat(fdpDaysOnline) + 4 * toInt(mooc4w), 0, 15);
+      mandatoryMarks = clamp(10 * toInt(mandatoryCourses), 0, 10);
+    } else {
+      pubsMarks = clamp(25 * toInt(publications), 0, 75);
+      citationsMarks = clamp(1 * toInt(citations), 0, 15);
+      consultancyMarks = clamp(toFloat(consultancyRevenue) > 0 ? (toFloat(consultancyRevenue) / 200000) * 20 : 0, 0, 20);
+      proposalsMarks = clamp(5 * toInt(sponsoredGrantsCount), 0, 15);
+      grantsAmountMarks = clamp(
+        toFloat(sponsoredGrantsAmount) > 10000 ? ((toFloat(sponsoredGrantsAmount) - 10000) / (200000 - 10000)) * 25 : 0,
+        0,
+        25
+      );
+      sponsoredCombined = clamp(proposalsMarks + grantsAmountMarks, 0, 40);
+      researchVisitsMarks = clamp(10 * toInt(researchVisits), 0, 10);
+      membershipsMarks = clamp(10 * toInt(membershipsCount), 0, 10);
+      fdpMarks = clamp(1 * toFloat(fdpDaysPhys) + 0.5 * toFloat(fdpDaysOnline) + 4 * toInt(mooc4w), 0, 20);
+      mandatoryMarks = clamp(10 * toInt(mandatoryCourses), 0, 10);
+    }
 
     const researchTotal = clamp(
       pubsMarks +
@@ -119,21 +184,30 @@ export default function SubmissionForm({
         fdpMarks +
         mandatoryMarks,
       0,
-      200
+      MAXS.research
     );
 
-    const convenerMarks = clamp(3 * toInt(convenerDays) + 2 * toInt(convenerOnlineDays) + 2 * toInt(guestHours) + 1 * toInt(committeeEvents), 0, 20);
+    // Administration
+    const convenerMarks = clamp(
+      3 * toInt(convenerDays) + 2 * toInt(convenerOnlineDays) + 2 * toInt(guestHours) + 1 * toInt(committeeEvents),
+      0,
+      isAPIII ? 40 : 20
+    );
     const eventsMarks = 3 * toInt(eventsA) + 2 * toInt(eventsB) + 1 * toInt(eventsC);
-    const respMarks = clamp(10 * toInt(headCount) + 5 * toInt(memberCount), 0, 30);
-    const adminTotal = clamp(convenerMarks + eventsMarks + respMarks, 0, 50);
+    const respMarks = clamp(10 * toInt(headCount) + 5 * toInt(memberCount), 0, isAPIII ? 35 : 30);
 
-    const communityMarks = clamp(10 * toInt(outreachActivities), 0, 30);
+    const adminRaw = convenerMarks + eventsMarks + respMarks;
+    const adminTotal = clamp(adminRaw, 0, MAXS.admin);
+
+    // Outreach
+    const communityMarks = clamp(10 * toInt(outreachActivities), 0, isAPIII ? 15 : 30);
     const resourceMarks = clamp(3 * toInt(resourceOutsideHours) + 2 * toInt(resourceInsideHours), 0, 20);
-    const trainingMarks = clamp((toFloat(trainingDays) / 14) * 30, 0, 30);
+    const trainingMarks = clamp((toFloat(trainingDays) / 14) * (isAPIII ? 20 : 30), 0, isAPIII ? 20 : 30);
     const awardsMarks = clamp(5 * toInt(awardsCount), 0, 20);
     const recognitionMarks = clamp(4 * toInt(editorialCount) + 1 * toInt(reviewsCount), 0, 20);
     const awardsTotal = clamp(awardsMarks + recognitionMarks, 0, 20);
-    const outreachTotal = clamp(communityMarks + resourceMarks + trainingMarks + awardsTotal, 0, 100);
+
+    const outreachTotal = clamp(communityMarks + resourceMarks + trainingMarks + awardsTotal, 0, MAXS.outreach);
 
     const grandTotal = Math.round(academicTotal + researchTotal + adminTotal + outreachTotal);
 
@@ -155,12 +229,18 @@ export default function SubmissionForm({
         admin: { convenerMarks, eventsMarks, respMarks },
         outreach: { communityMarks, resourceMarks, trainingMarks, awardsTotal },
       },
-      totals: { academic: Math.round(academicTotal), research: Math.round(researchTotal), admin: Math.round(adminTotal), outreach: Math.round(outreachTotal), total: grandTotal },
+      totals: {
+        academic: Math.round(academicTotal),
+        research: Math.round(researchTotal),
+        admin: Math.round(adminTotal),
+        outreach: Math.round(outreachTotal),
+        total: grandTotal,
+      },
     };
   }
 
-  // compute live
   const computed = useMemo(() => computeMarks(), [
+    facultyRank,
     passPercent,
     studentFeedback,
     onlineVideos,
@@ -195,16 +275,122 @@ export default function SubmissionForm({
     reviewsCount,
   ]);
 
-  // drag & drop
+  // Populate form if submission prop provided
+  useEffect(() => {
+    if (!submission) return;
+
+    // Map common fields - adjust names to match your API if necessary
+    if (submission.faculty_rank) setFacultyRank(submission.faculty_rank);
+    if (submission.academic_year) setAcademicYear(submission.academic_year);
+
+    setPassPercent(submission.pass_percent ?? submission.passPercent ?? passPercent);
+    setStudentFeedback(submission.student_feedback ?? submission.studentFeedback ?? studentFeedback);
+    setOnlineVideos(submission.online_videos ?? submission.onlineVideos ?? onlineVideos);
+    setSdgActivities(submission.sdg_activities ?? submission.sdgActivities ?? sdgActivities);
+    setVacHours(submission.vac_hours ?? submission.vacHours ?? vacHours);
+
+    setPublications(submission.publications ?? submission.publication_count ?? publications);
+    setCitations(submission.citations ?? submission.citation_count ?? citations);
+    setConsultancyRevenue(submission.consultancy_revenue ?? consultancyRevenue);
+    setSponsoredGrantsCount(submission.sponsored_grants_count ?? submission.grants_count ?? sponsoredGrantsCount);
+    setSponsoredGrantsAmount(submission.sponsored_grants_amount ?? submission.grants_amount ?? sponsoredGrantsAmount);
+    setResearchVisits(submission.research_visits ?? researchVisits);
+    setMembershipsCount(submission.memberships_count ?? membershipsCount);
+    setFdpDaysPhys(submission.fdp_days_phys ?? fdpDaysPhys);
+    setFdpDaysOnline(submission.fdp_days_online ?? fdpDaysOnline);
+    setMooc4w(submission.mooc_4w ?? mooc4w);
+    setMandatoryCourses(submission.mandatory_courses ?? mandatoryCourses);
+
+    setConvenerDays(submission.convener_days ?? convenerDays);
+    setConvenerOnlineDays(submission.convener_online_days ?? convenerOnlineDays);
+    setGuestHours(submission.guest_hours ?? guestHours);
+    setCommitteeEvents(submission.committee_events ?? committeeEvents);
+    setEventsA(submission.events_a ?? eventsA);
+    setEventsB(submission.events_b ?? eventsB);
+    setEventsC(submission.events_c ?? eventsC);
+    setHeadCount(submission.head_count ?? headCount);
+    setMemberCount(submission.member_count ?? memberCount);
+
+    setOutreachActivities(submission.outreach_activities ?? outreachActivities);
+    setResourceOutsideHours(submission.resource_outside_hours ?? resourceOutsideHours);
+    setResourceInsideHours(submission.resource_inside_hours ?? resourceInsideHours);
+    setTrainingDays(submission.training_days ?? trainingDays);
+    setAwardsCount(submission.awards_count ?? awardsCount);
+    setEditorialCount(submission.editorial_count ?? editorialCount);
+    setReviewsCount(submission.reviews_count ?? reviewsCount);
+
+    // existingProofs: common shapes: submission.proofs || submission.files || submission.attachments
+    const globalProofs = submission.proofs ?? submission.files ?? submission.attachments ?? [];
+    if (Array.isArray(globalProofs)) {
+      setExistingProofs(globalProofs.map((p) => (typeof p === "string" ? { name: p, url: null } : p)));
+    }
+
+    // existingActivityProofs: backend might store per-row keys like proof_row_1 etc or structure {row: []}
+    const perActivity = {};
+    if (submission.activity_proofs && typeof submission.activity_proofs === "object") {
+      // e.g. { "1": [{name,url}], "2": [...] }
+      Object.entries(submission.activity_proofs).forEach(([row, arr]) => {
+        if (Array.isArray(arr)) perActivity[row] = arr.map((p) => (typeof p === "string" ? { name: p, url: null } : p));
+      });
+    } else {
+      // try to detect proof_row_{n} keys
+      for (let i = 1; i <= 20; i++) {
+        const k1 = `proof_row_${i}`;
+        if (Array.isArray(submission[k1]) && submission[k1].length) {
+          perActivity[i] = submission[k1].map((p) => (typeof p === "string" ? { name: p, url: null } : p));
+        }
+      }
+    }
+    setExistingActivityProofs(perActivity);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [submission]);
+
+  // drag & drop global file (multiple)
   function onDropFile(e) {
     e.preventDefault();
     setDragOver(false);
-    const f = e.dataTransfer?.files?.[0];
-    if (f) setProofFile(f);
+    const files = Array.from(e.dataTransfer?.files || []);
+    if (files.length) {
+      setProofFiles((prev) => [...prev, ...files]);
+    }
   }
+
+  // per-activity file handlers (accept multiple)
+  function handleActivityFileChange(row, e) {
+    const files = Array.from(e.target.files || []);
+    setActivityFiles((prev) => {
+      const next = { ...(prev || {}) };
+      next[row] = [...(next[row] || []), ...files];
+      return next;
+    });
+    e.target.value = "";
+  }
+
+  // remove single file from per-activity list (new uploads)
+  function removeActivityFile(row, idx) {
+    setActivityFiles((prev) => {
+      const next = { ...(prev || {}) };
+      if (!Array.isArray(next[row])) return prev;
+      next[row] = next[row].filter((_, i) => i !== idx);
+      if (next[row].length === 0) delete next[row];
+      return next;
+    });
+  }
+
+  // remove a single global new file by index
+  function removeProofFile(idx) {
+    setProofFiles((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  // NOTE: we do not attempt to remove existingProofs server-side automatically since backend contract may vary.
+  // If you want that behavior, backend must accept a remove list like remove_proofs[] or accept PATCH fields.
 
   async function handleSubmit(e) {
     e && e.preventDefault();
+    if (!editable) {
+      setStatus("Form is not editable.");
+      return;
+    }
     setStatus("");
     setSubmitting(true);
 
@@ -259,74 +445,197 @@ export default function SubmissionForm({
       fd.append("editorial_count", toInt(editorialCount));
       fd.append("reviews_count", toInt(reviewsCount));
 
-      // computed totals
+      // computed totals + rubric variant
       fd.append("section_totals_json", JSON.stringify(computed));
+      fd.append("rubric_variant", isAPIII ? "AP III" : "DEFAULT");
 
-      if (proofFile) fd.append("proof", proofFile);
+      // Append new global proof files (multiple allowed)
+      proofFiles.forEach((f) => {
+        fd.append("proof", f);
+      });
 
-      const res = await fetch(`${apiBase.replace(/\/$/,"")}/api/submissions/`, {
-        method: "POST",
+      // Append new per-activity proof files (multiple per row allowed)
+      Object.entries(activityFiles).forEach(([row, files]) => {
+        if (!Array.isArray(files)) return;
+        files.forEach((file) => {
+          fd.append(`proof_row_${row}`, file);
+        });
+      });
+
+      // If submission exists -> update (PATCH), else create (POST)
+      const isUpdate = !!(submission && (submission._id || submission.id));
+      const urlBase = apiBase.replace(/\/$/, "");
+      const url = isUpdate
+        ? `${urlBase}/api/submissions/${encodeURIComponent(submission._id || submission.id)}/`
+        : `${urlBase}/api/submissions/`;
+
+      const res = await fetch(url, {
+        method: isUpdate ? "PATCH" : "POST",
         headers: { Authorization: "Bearer " + token },
         body: fd,
+        credentials: "include",
       });
 
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body.detail || JSON.stringify(body) || `HTTP ${res.status}`);
-      setStatus("Submission saved.");
-      setProofFile(null);
-      // optionally reset some fields — leaving defaults
-      onSubmitted();
+      if (!res.ok) throw new Error(body.detail || body.message || JSON.stringify(body) || `HTTP ${res.status}`);
+
+      setStatus(isUpdate ? "Submission updated." : "Submission created.");
+      // clear new-file buffers (do not clear existingProofs)
+      setProofFiles([]);
+      setActivityFiles({});
+      onSubmitted(body);
     } catch (err) {
-      setStatus("Error: " + err.message);
+      setStatus("Error: " + (err?.message || String(err)));
     } finally {
       setSubmitting(false);
     }
   }
 
-  // small row renderer helper to make code shorter
-  function NumericInput({ value, onChange, placeholder = "Enter", min = 0, step = "1" }) {
+  // NumericInput helper (same as original)
+  function NumericInput({ value, onChange, placeholder = "Enter", min = 0, step = "1", inputIndex = 0, style = {} }) {
     return (
       <input
+        ref={(el) => (inputRefs.current[inputIndex] = el)}
         type="number"
-        min={min}
-        step={step}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        style={{
-          width: 110,
-          padding: "6px 8px",
-          borderRadius: 6,
-          border: "1px solid rgba(255,255,255,0.06)",
-          background: "rgba(255,255,255,0.02)",
-          color: "#eaf2ff",
+        onFocus={(e) => {
+          try {
+            e.target.select();
+          } catch (err) {}
         }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            const next = inputIndex + 1;
+            if (inputRefs.current[next]) {
+              inputRefs.current[next].focus();
+              try {
+                inputRefs.current[next].select();
+              } catch (err) {}
+            }
+          }
+        }}
+        className="numeric-input"
         placeholder={placeholder}
+        min={min}
+        step={step}
+        style={style}
+        disabled={!editable}
       />
     );
   }
 
-  // layout: we'll produce a large vertically scrollable modal-ish card
+  // FileAttach per-row showing both existing (read-only) and new uploaded files
+  function FileAttach({ row }) {
+    const newFiles = activityFiles[row] || [];
+    const existing = existingActivityProofs[row] || [];
+    return (
+      <div className="file-attach-wrap" style={{ minWidth: 140 }}>
+        <input
+          id={`file-input-row-${row}`}
+          type="file"
+          accept=".pdf,.docx,.png,.jpg"
+          style={{ display: "none" }}
+          multiple
+          onChange={(e) => handleActivityFileChange(row, e)}
+          disabled={!editable}
+        />
+        <label htmlFor={`file-input-row-${row}`} className="btn-attach" style={{ opacity: editable ? 1 : 0.6, pointerEvents: editable ? "auto" : "none" }}>
+          Attach
+        </label>
+
+        {/* show existing (server-side) proofs */}
+        {existing.length > 0 && (
+          <div style={{ marginTop: 6 }}>
+            {existing.map((p, i) => (
+              <div key={"ex-" + i} style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "flex-end" }}>
+                <div className="file-name" title={p.name} style={{ maxWidth: 120 }}>
+                  {p.url ? <a href={p.url} target="_blank" rel="noreferrer" style={{ color: "#cfe7ff" }}>{p.name}</a> : p.name}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* show newly added (client) files */}
+        {newFiles.length > 0 && (
+          <div style={{ marginTop: 6 }}>
+            {newFiles.map((f, i) => (
+              <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "flex-end" }}>
+                <div className="file-name" title={f.name} style={{ maxWidth: 120 }}>{f.name}</div>
+                <button type="button" onClick={() => removeActivityFile(row, i)} className="btn-small">Remove</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // mapping row -> first input index (used by focusRowInput)
+  function focusRowInput(rowNumber) {
+    const rowToIndex = {
+      1: 0,
+      2: 1,
+      3: 2,
+      4: 3,
+      5: 4,
+      6: 5,
+      7: 6,
+      8: 7,
+      9: 8, // proposals count input
+      10: 10,
+      11: 11,
+      12: 12,
+      13: 15,
+      14: 16,
+      15: 19,
+      16: 22,
+      17: 24,
+      18: 25,
+      19: 27,
+      20: 28,
+    };
+    const idx = rowToIndex[rowNumber];
+    if (typeof idx === "number" && inputRefs.current[idx]) {
+      inputRefs.current[idx].focus();
+      try {
+        inputRefs.current[idx].select();
+      } catch (err) {}
+    }
+  }
+
+  // Styles (same as before)
+  const styles = {
+    overlay: { position: "fixed", inset: 0, background: "rgba(3,6,23,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 3000, padding: 18 },
+    form: { width: "92%", maxWidth: 1100, maxHeight: "92vh", overflow: "auto", background: "#0d1b2a", padding: 20, borderRadius: 12, color: "#eaf2ff", boxShadow: "0 8px 40px rgba(2,6,18,0.6)" },
+    tableWrap: { borderRadius: 10, overflow: "hidden", border: "1px solid rgba(255,255,255,0.03)", marginTop: 6, background: "linear-gradient(180deg, rgba(255,255,255,0.01), rgba(255,255,255,0.008))" },
+    headerRow: { padding: "12px 18px", borderBottom: "1px solid rgba(255,255,255,0.02)", background: "rgba(255,255,255,0.01)", display: "grid", gridTemplateColumns: "48px 1fr 300px 220px 80px 160px", gap: 12, alignItems: "center" },
+    row: { display: "grid", gridTemplateColumns: "48px 1fr 300px 220px 80px 160px", gap: 12, alignItems: "center", padding: "12px 6px", borderBottom: "1px solid rgba(255,255,255,0.02)", cursor: "text" },
+  };
+
   return (
-    <div style={{
-      position: "fixed", inset: 0, background: "rgba(3,6,23,0.7)",
-      display: "flex", alignItems: "center", justifyContent: "center", zIndex: 3000, padding: 18
-    }}>
-      <form onSubmit={handleSubmit} style={{
-        width: "92%", maxWidth: 1100, maxHeight: "92vh", overflow: "auto",
-        background: "#0d1b2a", padding: 20, borderRadius: 12, color: "#eaf2ff",
-        boxShadow: "0 8px 40px rgba(2,6,18,0.6)"
-      }}>
+    <div style={styles.overlay}>
+      <form onSubmit={handleSubmit} style={styles.form}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: 12 }}>
           <div>
-            <h2 style={{ margin: "0 0 6px 0" }}>Submit KPI Sheet</h2>
-            <div style={{ color: "rgba(200,220,255,0.6)" }}>Fill the KPI entries below. Points will be computed automatically.</div>
+            <h2 style={{ margin: "0 0 6px 0" }}>{submission ? (editable ? "Edit KPI Sheet" : "View KPI Sheet") : "Submit KPI Sheet"}</h2>
+            <div style={{ color: "rgba(200,220,255,0.6)" }}>
+              Fill the KPI entries below. Points will be computed automatically.
+              <div style={{ marginTop: 6, fontSize: 13, color: "#bcd7ff" }}>
+                Rubric: <strong>{isAPIII ? "AP (III) variant" : "Default AP I / AP II variant"}</strong>
+              </div>
+            </div>
           </div>
 
           <div style={{ display: "flex", gap: 8 }}>
-            <button type="button" onClick={onCancel} style={{ padding: "10px 14px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.04)", background: "transparent", color: "#eaf2ff", cursor: "pointer" }}>Cancel</button>
-            <button type="submit" disabled={submitting} style={{ padding: "10px 16px", borderRadius: 10, border: "none", background: "linear-gradient(90deg,#6a11cb,#2575fc)", color: "#fff", fontWeight: 700, cursor: "pointer" }}>
-              {submitting ? "Submitting..." : "Submit KPI Sheet"}
-            </button>
+            <button type="button" onClick={onCancel} className="btn-cancel">Close</button>
+            {editable && (
+              <button type="submit" disabled={submitting} className="btn-primary">
+                {submitting ? (submission ? "Saving..." : "Submitting...") : (submission ? "Save Changes" : "Submit KPI Sheet")}
+              </button>
+            )}
           </div>
         </div>
 
@@ -334,7 +643,7 @@ export default function SubmissionForm({
         <div style={{ display: "flex", gap: 12, marginTop: 16, marginBottom: 16, flexWrap: "wrap" }}>
           <div style={{ flex: "1 1 260px" }}>
             <label style={{ display: "block", color: "rgba(200,220,255,0.7)", marginBottom: 6 }}>🎓 Faculty Rank</label>
-            <select value={facultyRank} onChange={(e) => setFacultyRank(e.target.value)} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, background: "#0b1720", color: "#eaf2ff", border: "1px solid rgba(255,255,255,0.04)" }}>
+            <select value={facultyRank} onChange={(e) => setFacultyRank(e.target.value)} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, background: "#0b1720", color: "#eaf2ff", border: "1px solid rgba(255,255,255,0.04)" }} disabled={!editable}>
               <option>AP I</option>
               <option>AP II</option>
               <option>AP III</option>
@@ -345,218 +654,333 @@ export default function SubmissionForm({
 
           <div style={{ flex: "1 1 160px" }}>
             <label style={{ display: "block", color: "rgba(200,220,255,0.7)", marginBottom: 6 }}>📅 Academic Year</label>
-            <input value={academicYear} onChange={(e) => setAcademicYear(e.target.value)} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, background: "#0b1720", color: "#eaf2ff", border: "1px solid rgba(255,255,255,0.04)" }} />
+            <input value={academicYear} onChange={(e) => setAcademicYear(e.target.value)} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, background: "#0b1720", color: "#eaf2ff", border: "1px solid rgba(255,255,255,0.04)" }} disabled={!editable}/>
           </div>
         </div>
 
         {/* table / card */}
-        <div style={{ borderRadius: 10, overflow: "hidden", border: "1px solid rgba(255,255,255,0.03)", marginTop: 6, background: "linear-gradient(180deg, rgba(255,255,255,0.01), rgba(255,255,255,0.008))" }}>
-          <div style={{ padding: "12px 18px", borderBottom: "1px solid rgba(255,255,255,0.02)", background: "rgba(255,255,255,0.01)", display: "flex", gap: 12, alignItems: "center" }}>
-            <div style={{ width: 48, color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>#</div>
-            <div style={{ flex: 1, color: "rgba(200,220,255,0.9)", fontWeight: 700 }}>Activity</div>
-            <div style={{ width: 300, color: "rgba(200,220,255,0.9)", fontWeight: 700 }}>Rubric <span style={{ fontSize: 12, color: "rgba(200,220,255,0.6)" }}>(ℹ️)</span></div>
-            <div style={{ width: 80, color: "rgba(200,220,255,0.9)", fontWeight: 700, textAlign: "right" }}>Max</div>
-            <div style={{ width: 160, color: "rgba(200,220,255,0.9)", fontWeight: 700, textAlign: "right" }}>Points Scored</div>
+        <div style={styles.tableWrap}>
+          <div style={styles.headerRow}>
+            <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>#</div>
+            <div style={{ color: "rgba(200,220,255,0.9)", fontWeight: 700 }}>Activity</div>
+            <div style={{ color: "rgba(200,220,255,0.9)", fontWeight: 700 }}>Rubric <span style={{ fontSize: 12, color: "rgba(200,220,255,0.6)" }}>(ℹ️)</span></div>
+            <div style={{ color: "rgba(200,220,255,0.9)", fontWeight: 700, textAlign: "right" }}>Attach Proof</div>
+            <div style={{ color: "rgba(200,220,255,0.9)", fontWeight: 700, textAlign: "right" }}>Max</div>
+            <div style={{ color: "rgba(200,220,255,0.9)", fontWeight: 700, textAlign: "right" }}>Points Scored</div>
           </div>
 
-          <div style={{ padding: 12 }}>
-            {/* We'll render each row manually to ensure full 20 rows */}
-            {/* 1: Pass % */}
-            <Row number={1} activity="% Pass in ESE (Average of all theory courses)" rubric="81% - 95% → 0–30" max={30}>
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center" }}>
-                <NumericInput value={passPercent} onChange={(v) => setPassPercent(v)} min={0} step="0.1" />
+          <div style={{ padding: 12, maxHeight: "60vh", overflowY: "auto" }}>
+            {/* Row 1 */}
+            <div className="row" style={styles.row} onClick={(e) => { const tag = e.target.tagName?.toLowerCase(); if (!["button","input","label","a"].includes(tag)) focusRowInput(1); }}>
+              <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>1</div>
+              <div>% Pass in ESE (Average of all theory courses)</div>
+              <div style={{ color: "rgba(200,220,255,0.7)" }}>{isAPIII ? "81% - 95% → 0–20" : "80% - 95% → 0–30"}</div>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}><FileAttach row={1} /></div>
+              <div style={{ textAlign: "right", color: "rgba(200,220,255,0.8)", fontWeight: 700 }}>{isAPIII ? 20 : 30}</div>
+              <div style={{ textAlign: "right", display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center" }}>
+                <NumericInput inputIndex={0} value={passPercent} onChange={(v) => setPassPercent(toFloat(v))} min={0} step="0.1" />
                 <Badge>{Math.round(computed.perRow.academic.passMarks)}</Badge>
               </div>
-            </Row>
+            </div>
 
-            {/* 2: Student feedback */}
-            <Row number={2} activity="Student Feedback (Average of all theory courses)" rubric="3.1 - 4.5 (out of 5) → 0–30" max={30}>
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center" }}>
-                <NumericInput value={studentFeedback} onChange={(v) => setStudentFeedback(v)} min={0} step="0.1" />
+            {/* Row 2 */}
+            <div className="row" style={styles.row} onClick={(e) => { const tag = e.target.tagName?.toLowerCase(); if (!["button","input","label","a"].includes(tag)) focusRowInput(2); }}>
+              <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>2</div>
+              <div>Student Feedback (Average of all theory courses)</div>
+              <div style={{ color: "rgba(200,220,255,0.7)" }}>{isAPIII ? "3.1 - 4.5 (out of 5) → 0–20" : "3.0 - 4.5 (out of 5) → 0–30"}</div>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}><FileAttach row={2} /></div>
+              <div style={{ textAlign: "right", color: "rgba(200,220,255,0.8)", fontWeight: 700 }}>{isAPIII ? 20 : 30}</div>
+              <div style={{ textAlign: "right", display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center" }}>
+                <NumericInput inputIndex={1} value={studentFeedback} onChange={(v) => setStudentFeedback(toFloat(v))} min={0} step="0.1" />
                 <Badge>{Math.round(computed.perRow.academic.fbMarks)}</Badge>
               </div>
-            </Row>
+            </div>
 
-            {/* 3: Online videos */}
-            <Row number={3} activity="Developing Online Course / Video Lecture and uploaded" rubric="10 pts / video (cap 30)" max={30}>
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center" }}>
-                <NumericInput value={onlineVideos} onChange={(v) => setOnlineVideos(v)} min={0} step="1" />
+            {/* Row 3 */}
+            <div className="row" style={styles.row} onClick={(e) => { const tag = e.target.tagName?.toLowerCase(); if (!["button","input","label","a"].includes(tag)) focusRowInput(3); }}>
+              <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>3</div>
+              <div>Developing Online Course / Video Lecture and uploaded</div>
+              <div style={{ color: "rgba(200,220,255,0.7)" }}>10 pts / video (cap 30)</div>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}><FileAttach row={3} /></div>
+              <div style={{ textAlign: "right", color: "rgba(200,220,255,0.8)", fontWeight: 700 }}>30</div>
+              <div style={{ textAlign: "right", display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center" }}>
+                <NumericInput inputIndex={2} value={onlineVideos} onChange={(v) => setOnlineVideos(toInt(v))} min={0} step="1" />
                 <Badge>{Math.round(computed.perRow.academic.videosMarks)}</Badge>
               </div>
-            </Row>
+            </div>
 
-            {/* 4: SDG activities */}
-            <Row number={4} activity="Implementation of Innovative teaching methodologies addressing SDGs" rubric="4 pts / activity (cap 30)" max={30}>
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center" }}>
-                <NumericInput value={sdgActivities} onChange={(v) => setSdgActivities(v)} min={0} />
+            {/* Row 4 */}
+            <div className="row" style={styles.row} onClick={() => focusRowInput(4)}>
+              <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>4</div>
+              <div>Implementation of Innovative teaching methodologies addressing SDGs</div>
+              <div style={{ color: "rgba(200,220,255,0.7)" }}>4 pts / activity (cap 30)</div>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}><FileAttach row={4} /></div>
+              <div style={{ textAlign: "right", color: "rgba(200,220,255,0.8)", fontWeight: 700 }}>30</div>
+              <div style={{ textAlign: "right", display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center" }}>
+                <NumericInput inputIndex={3} value={sdgActivities} onChange={(v) => setSdgActivities(toInt(v))} min={0} />
                 <Badge>{Math.round(computed.perRow.academic.sdgMarks)}</Badge>
               </div>
-            </Row>
+            </div>
 
-            {/* 5: VAC hours */}
-            <Row number={5} activity="Conduct of VAC / Capsule courses / Achievements / Publications" rubric="1 pt/hr VAC; 4 pts achievement; 2 pts/publication" max={30}>
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center" }}>
-                <NumericInput value={vacHours} onChange={(v) => setVacHours(v)} min={0} />
+            {/* Row 5 */}
+            <div className="row" style={styles.row} onClick={() => focusRowInput(5)}>
+              <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>5</div>
+              <div>Conduct of VAC / Capsule courses / Training the students / Publications</div>
+              <div style={{ color: "rgba(200,220,255,0.7)" }}>{isAPIII ? "1 pt/hr VAC; 4 pts achievement; 2 pts/publication — Academic aggregated" : "1 pt/hr VAC; 4 pts achievement; 2 pts/publication"}</div>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}><FileAttach row={5} /></div>
+              <div style={{ textAlign: "right", color: "rgba(200,220,255,0.8)", fontWeight: 700 }}>{isAPIII ? 25 : 30}</div>
+              <div style={{ textAlign: "right", display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center" }}>
+                <NumericInput inputIndex={4} value={vacHours} onChange={(v) => setVacHours(toInt(v))} min={0} />
                 <Badge>{Math.round(computed.perRow.academic.vacMarks)}</Badge>
               </div>
-            </Row>
+            </div>
 
-            {/* Academic subtotal */}
-            <SectionTotal label="Academic Total" max={150} value={computed.totals.academic} />
+            <SectionTotal label="Academic Total" max={MAXS.academic} value={computed.totals.academic} />
 
-            {/* Research section header */}
             <SectionHeader text="Research & Professional Development" />
 
-            {/* 6: Publications */}
-            <Row number={6} activity="Publications" rubric="25 pts / publication (up to 75)" max={75}>
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center" }}>
-                <NumericInput value={publications} onChange={(v) => setPublications(v)} min={0} />
+            {/* Row 6 */}
+            <div className="row" style={styles.row} onClick={() => focusRowInput(6)}>
+              <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>6</div>
+              <div>Publications</div>
+              <div style={{ color: "rgba(200,220,255,0.7)" }}>{isAPIII ? "Publications - target 3 (Min 1 SCI) — total up to 80 pts" : "25 pts / publication (up to 75)"}</div>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}><FileAttach row={6} /></div>
+              <div style={{ textAlign: "right", color: "rgba(200,220,255,0.8)", fontWeight: 700 }}>{isAPIII ? 80 : 75}</div>
+              <div style={{ textAlign: "right", display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center" }}>
+                <NumericInput inputIndex={5} value={publications} onChange={(v) => setPublications(toInt(v))} min={0} />
                 <Badge>{Math.round(computed.perRow.research.pubsMarks)}</Badge>
               </div>
-            </Row>
+            </div>
 
-            {/* 7: Citations */}
-            <Row number={7} activity="Citations" rubric="1 pt / citation (cap 15)" max={15}>
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center" }}>
-                <NumericInput value={citations} onChange={(v) => setCitations(v)} min={0} />
+            {/* Row 7 */}
+            <div className="row" style={styles.row} onClick={() => focusRowInput(7)}>
+              <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>7</div>
+              <div>Article Citation in WoS / Scopus Journals & Conferences</div>
+              <div style={{ color: "rgba(200,220,255,0.7)" }}>{isAPIII ? "0.5 pt / citation (including KPRIET affiliated) — cap 20" : "1 pt / citation (cap 15)"}</div>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}><FileAttach row={7} /></div>
+              <div style={{ textAlign: "right", color: "rgba(200,220,255,0.8)", fontWeight: 700 }}>{isAPIII ? 20 : 15}</div>
+              <div style={{ textAlign: "right", display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center" }}>
+                <NumericInput inputIndex={6} value={citations} onChange={(v) => setCitations(toInt(v))} min={0} />
                 <Badge>{Math.round(computed.perRow.research.citationsMarks)}</Badge>
               </div>
-            </Row>
+            </div>
 
-            {/* 8: Consultancy */}
-            <Row number={8} activity="Consultancy Revenue (₹ / year)" rubric="Scaled 0..200k → 0..20" max={20}>
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center" }}>
-                <NumericInput value={consultancyRevenue} onChange={(v) => setConsultancyRevenue(v)} min={0} />
+            {/* Row 8 */}
+            <div className="row" style={styles.row} onClick={() => focusRowInput(8)}>
+              <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>8</div>
+              <div>Consultancy Revenue (₹ / year)</div>
+              <div style={{ color: "rgba(200,220,255,0.7)" }}>{isAPIII ? "Scaled to 25 pts (0..200k -> 0..25)" : "Scaled 0..200k → 0..20"}</div>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}><FileAttach row={8} /></div>
+              <div style={{ textAlign: "right", color: "rgba(200,220,255,0.8)", fontWeight: 700 }}>{isAPIII ? 25 : 20}</div>
+              <div style={{ textAlign: "right", display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center" }}>
+                <NumericInput inputIndex={7} value={consultancyRevenue} onChange={(v) => setConsultancyRevenue(toFloat(v))} min={0} />
                 <Badge>{Math.round(computed.perRow.research.consultancyMarks)}</Badge>
               </div>
-            </Row>
+            </div>
 
-            {/* 9: Sponsored grants */}
-            <Row number={9} activity="Sponsored grants / proposals" rubric="Combined scaled score (cap 40)" max={40}>
-              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center" }}>
-                <input className="mini" type="number" min="0" placeholder="#proposals" value={sponsoredGrantsCount} onChange={(e) => setSponsoredGrantsCount(e.target.value)} style={{ width: 90, padding: "6px 8px", borderRadius:6 }} />
-                <input className="mini" type="number" min="0" placeholder="Total ₹" value={sponsoredGrantsAmount} onChange={(e) => setSponsoredGrantsAmount(e.target.value)} style={{ width: 110, padding: "6px 8px", borderRadius:6 }} />
+            {/* Row 9 (two inputs: proposals count index=8, grants amount index=9) */}
+            <div className="row" style={styles.row} onClick={() => focusRowInput(9)}>
+              <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>9</div>
+              <div>Sponsored grants / proposals</div>
+              <div style={{ color: "rgba(200,220,255,0.7)" }}>{isAPIII ? "a) 10K-4L → up to 10 pts; b) 5 pts / proposal (cap 40) — combined cap 50" : "Combined scaled score (cap 40)"}</div>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}><FileAttach row={9} /></div>
+              <div style={{ textAlign: "right", color: "rgba(200,220,255,0.8)", fontWeight: 700 }}>{isAPIII ? 50 : 40}</div>
+              <div style={{ textAlign: "right", display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center" }}>
+                <input
+                  className="mini numeric-input"
+                  type="number"
+                  min="0"
+                  placeholder="#proposals"
+                  value={sponsoredGrantsCount}
+                  onChange={(e) => setSponsoredGrantsCount(toInt(e.target.value))}
+                  ref={(el) => (inputRefs.current[8] = el)}
+                  style={{ width: 90, padding: "6px 8px", borderRadius: 6 }}
+                  disabled={!editable}
+                />
+                <input
+                  className="mini numeric-input"
+                  type="number"
+                  min="0"
+                  placeholder="Total ₹"
+                  value={sponsoredGrantsAmount}
+                  onChange={(e) => setSponsoredGrantsAmount(toFloat(e.target.value))}
+                  ref={(el) => (inputRefs.current[9] = el)}
+                  style={{ width: 110, padding: "6px 8px", borderRadius: 6 }}
+                  disabled={!editable}
+                />
                 <Badge>{Math.round(computed.perRow.research.sponsoredCombined)}</Badge>
               </div>
-            </Row>
+            </div>
 
-            {/* 10: Research visits */}
-            <Row number={10} activity="Research visits" rubric="10 pts / visit" max={10}>
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center" }}>
-                <NumericInput value={researchVisits} onChange={(v) => setResearchVisits(v)} min={0} />
+            {/* Row 10 */}
+            <div className="row" style={styles.row} onClick={() => focusRowInput(10)}>
+              <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>10</div>
+              <div>Research Scholars Supervision</div>
+              <div style={{ color: "rgba(200,220,255,0.7)" }}>{isAPIII ? "10 pts per PhD completion; 4 pts FT; 3 pts PT" : "Research visits / supervision mapping"}</div>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}><FileAttach row={10} /></div>
+              <div style={{ textAlign: "right", color: "rgba(200,220,255,0.8)", fontWeight: 700 }}>15</div>
+              <div style={{ textAlign: "right", display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center" }}>
+                <NumericInput inputIndex={10} value={researchVisits} onChange={(v) => setResearchVisits(toInt(v))} min={0} />
                 <Badge>{Math.round(computed.perRow.research.researchVisitsMarks)}</Badge>
               </div>
-            </Row>
+            </div>
 
-            {/* 11: Memberships */}
-            <Row number={11} activity="Professional memberships" rubric="10 pts / membership" max={10}>
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center" }}>
-                <NumericInput value={membershipsCount} onChange={(v) => setMembershipsCount(v)} min={0} />
+            {/* Row 11 */}
+            <div className="row" style={styles.row} onClick={() => focusRowInput(11)}>
+              <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>11</div>
+              <div>Visit to Research Laboratories for Collaboration</div>
+              <div style={{ color: "rgba(200,220,255,0.7)" }}>1 visit → 10 pts (cap 10)</div>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}><FileAttach row={11} /></div>
+              <div style={{ textAlign: "right", color: "rgba(200,220,255,0.8)", fontWeight: 700 }}>10</div>
+              <div style={{ textAlign: "right", display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center" }}>
+                <NumericInput inputIndex={11} value={membershipsCount} onChange={(v) => setMembershipsCount(toInt(v))} min={0} />
                 <Badge>{Math.round(computed.perRow.research.membershipsMarks)}</Badge>
               </div>
-            </Row>
+            </div>
 
-            {/* 12: FDP / MOOC / STTP */}
-            <Row number={12} activity="FDP / MOOC / STTP" rubric="1 pt/day physical; 0.5 pt/day online; 4 pts/4w MOOC" max={20}>
-              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center" }}>
-                <NumericInput value={fdpDaysPhys} onChange={(v) => setFdpDaysPhys(v)} min={0} placeholder="phys days" />
-                <NumericInput value={fdpDaysOnline} onChange={(v) => setFdpDaysOnline(v)} min={0} placeholder="online days" />
-                <NumericInput value={mooc4w} onChange={(v) => setMooc4w(v)} min={0} placeholder="4w MOOC" />
+            {/* Row 12 */}
+            <div className="row" style={styles.row} onClick={() => focusRowInput(12)}>
+              <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>12</div>
+              <div>Completion of FDP / STTP / MOOC courses with proctored exam</div>
+              <div style={{ color: "rgba(200,220,255,0.7)" }}>1 pt/day physical; 0.5 pt/day online; 4 pts/4w MOOC</div>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}><FileAttach row={12} /></div>
+              <div style={{ textAlign: "right", color: "rgba(200,220,255,0.8)", fontWeight: 700 }}>{isAPIII ? 15 : 20}</div>
+              <div style={{ textAlign: "right", display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center" }}>
+                <NumericInput inputIndex={12} value={fdpDaysPhys} onChange={(v) => setFdpDaysPhys(toFloat(v))} min={0} placeholder="phys days" />
+                <NumericInput inputIndex={13} value={fdpDaysOnline} onChange={(v) => setFdpDaysOnline(toFloat(v))} min={0} placeholder="online days" />
+                <NumericInput inputIndex={14} value={mooc4w} onChange={(v) => setMooc4w(toInt(v))} min={0} placeholder="4w MOOC" />
                 <Badge>{Math.round(computed.perRow.research.fdpMarks)}</Badge>
               </div>
-            </Row>
+            </div>
 
-            {/* 13: Mandatory training */}
-            <Row number={13} activity="Mandatory training courses" rubric="10 pts / course" max={10}>
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center" }}>
-                <NumericInput value={mandatoryCourses} onChange={(v) => setMandatoryCourses(v)} min={0} />
+            {/* Row 13 */}
+            <div className="row" style={styles.row} onClick={() => focusRowInput(13)}>
+              <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>13</div>
+              <div>Number of Mandatory Training Programmes Completed</div>
+              <div style={{ color: "rgba(200,220,255,0.7)" }}>1 Course → 10 pts</div>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}><FileAttach row={13} /></div>
+              <div style={{ textAlign: "right", color: "rgba(200,220,255,0.8)", fontWeight: 700 }}>10</div>
+              <div style={{ textAlign: "right", display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center" }}>
+                <NumericInput inputIndex={15} value={mandatoryCourses} onChange={(v) => setMandatoryCourses(toInt(v))} min={0} />
                 <Badge>{Math.round(computed.perRow.research.mandatoryMarks)}</Badge>
               </div>
-            </Row>
+            </div>
 
-            {/* Research subtotal */}
-            <SectionTotal label="Research Total" max={200} value={computed.totals.research} />
+            <SectionTotal label="Research Total" max={MAXS.research} value={computed.totals.research} />
 
-            {/* Administration header */}
             <SectionHeader text="Administration" />
 
-            {/* 14: Convener / Guest / committee */}
-            <Row number={14} activity="Convener / Coordinator / Guest lectures / Committees" rubric="Physical 3 pts/day; Online 2 pts/day; Guest 2 pts/hr; Committee 1 pt" max={20}>
-              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center" }}>
-                <NumericInput value={convenerDays} onChange={(v) => setConvenerDays(v)} min={0} placeholder="phys" />
-                <NumericInput value={convenerOnlineDays} onChange={(v) => setConvenerOnlineDays(v)} min={0} placeholder="online" />
-                <NumericInput value={guestHours} onChange={(v) => setGuestHours(v)} min={0} placeholder="guest hrs" />
+            {/* Row 14 */}
+            <div className="row" style={styles.row} onClick={() => focusRowInput(14)}>
+              <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>14</div>
+              <div>Convener / Coordinator / Guest lectures / Committees</div>
+              <div style={{ color: "rgba(200,220,255,0.7)" }}>{isAPIII ? "Physical – 3 pts/day; Online – 2 pts/day; Guest/Webinars – 2 pts/day; Committee – 1 pt" : "Physical 3 pts/day; Online 2 pts/day; Guest 2 pts/hr; Committee 1 pt"}</div>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}><FileAttach row={14} /></div>
+              <div style={{ textAlign: "right", color: "rgba(200,220,255,0.8)", fontWeight: 700 }}>{isAPIII ? 25 : 20}</div>
+              <div style={{ textAlign: "right", display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center" }}>
+                <NumericInput inputIndex={16} value={convenerDays} onChange={(v) => setConvenerDays(toInt(v))} min={0} placeholder="phys" />
+                <NumericInput inputIndex={17} value={convenerOnlineDays} onChange={(v) => setConvenerOnlineDays(toInt(v))} min={0} placeholder="online" />
+                <NumericInput inputIndex={18} value={guestHours} onChange={(v) => setGuestHours(toInt(v))} min={0} placeholder="guest hrs" />
                 <Badge>{Math.round(computed.perRow.admin.convenerMarks)}</Badge>
               </div>
-            </Row>
+            </div>
 
-            {/* 15: Events A/B/C */}
-            <Row number={15} activity="Institution events (a/b/c)" rubric="a:3 pts b:2 pts c:1 pt" max={0}>
-              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center" }}>
-                <NumericInput value={eventsA} onChange={(v) => setEventsA(v)} min={0} placeholder="a" />
-                <NumericInput value={eventsB} onChange={(v) => setEventsB(v)} min={0} placeholder="b" />
-                <NumericInput value={eventsC} onChange={(v) => setEventsC(v)} min={0} placeholder="c" />
+            {/* Row 15 */}
+            <div className="row" style={styles.row} onClick={() => focusRowInput(15)}>
+              <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>15</div>
+              <div>National / Intl / Institute level events organized (a/b/c)</div>
+              <div style={{ color: "rgba(200,220,255,0.7)" }}>a:3 pts / program, b:2 pts / program, c:1 pt / program</div>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}><FileAttach row={15} /></div>
+              <div style={{ textAlign: "right", color: "rgba(200,220,255,0.8)", fontWeight: 700 }}>0</div>
+              <div style={{ textAlign: "right", display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center" }}>
+                <NumericInput inputIndex={19} value={eventsA} onChange={(v) => setEventsA(toInt(v))} min={0} placeholder="a" />
+                <NumericInput inputIndex={20} value={eventsB} onChange={(v) => setEventsB(toInt(v))} min={0} placeholder="b" />
+                <NumericInput inputIndex={21} value={eventsC} onChange={(v) => setEventsC(toInt(v))} min={0} placeholder="c" />
                 <Badge>{Math.round(computed.perRow.admin.eventsMarks)}</Badge>
               </div>
-            </Row>
+            </div>
 
-            {/* 16: Responsibilities */}
-            <Row number={16} activity="Institute / Dept responsibilities" rubric="Head 10 pts, Member 5 pts" max={30}>
-              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center" }}>
-                <NumericInput value={headCount} onChange={(v) => setHeadCount(v)} min={0} placeholder="heads" />
-                <NumericInput value={memberCount} onChange={(v) => setMemberCount(v)} min={0} placeholder="members" />
+            {/* Row 16 */}
+            <div className="row" style={styles.row} onClick={() => focusRowInput(16)}>
+              <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>16</div>
+              <div>Institute & Dept. level responsibility</div>
+              <div style={{ color: "rgba(200,220,255,0.7)" }}>Head:10 pts, Member:5 pts</div>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}><FileAttach row={16} /></div>
+              <div style={{ textAlign: "right", color: "rgba(200,220,255,0.8)", fontWeight: 700 }}>30</div>
+              <div style={{ textAlign: "right", display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center" }}>
+                <NumericInput inputIndex={22} value={headCount} onChange={(v) => setHeadCount(toInt(v))} min={0} placeholder="heads" />
+                <NumericInput inputIndex={23} value={memberCount} onChange={(v) => setMemberCount(toInt(v))} min={0} placeholder="members" />
                 <Badge>{Math.round(computed.perRow.admin.respMarks)}</Badge>
               </div>
-            </Row>
+            </div>
 
-            <SectionTotal label="Admin Total" max={50} value={computed.totals.admin} />
+            <SectionTotal label="Admin Total" max={MAXS.admin} value={computed.totals.admin} />
 
-            {/* Outreach header */}
             <SectionHeader text="Outreach Activities" />
 
-            {/* 17: Community service */}
-            <Row number={17} activity="Community Services / ISR" rubric="10 pts / activity" max={30}>
-              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center" }}>
-                <NumericInput value={outreachActivities} onChange={(v) => setOutreachActivities(v)} min={0} />
+            {/* Row 17 */}
+            <div className="row" style={styles.row} onClick={() => focusRowInput(17)}>
+              <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>17</div>
+              <div>Community Services / Addressing Rural Issues / ISR</div>
+              <div style={{ color: "rgba(200,220,255,0.7)" }}>{isAPIII ? "10 pts / activity (cap 15)" : "10 pts / activity"}</div>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}><FileAttach row={17} /></div>
+              <div style={{ textAlign: "right", color: "rgba(200,220,255,0.8)", fontWeight: 700 }}>{isAPIII ? 15 : 30}</div>
+              <div style={{ textAlign: "right", display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center" }}>
+                <NumericInput inputIndex={24} value={outreachActivities} onChange={(v) => setOutreachActivities(toInt(v))} min={0} />
                 <Badge>{Math.round(computed.perRow.outreach.communityMarks)}</Badge>
               </div>
-            </Row>
+            </div>
 
-            {/* 18: Resource person */}
-            <Row number={18} activity="Being a Resource person" rubric="Outside 3 pt/hr; Inside 2 pt/hr" max={20}>
-              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center" }}>
-                <NumericInput value={resourceOutsideHours} onChange={(v) => setResourceOutsideHours(v)} min={0} placeholder="outside hrs" />
-                <NumericInput value={resourceInsideHours} onChange={(v) => setResourceInsideHours(v)} min={0} placeholder="inside hrs" />
+            {/* Row 18 */}
+            <div className="row" style={styles.row} onClick={() => focusRowInput(18)}>
+              <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>18</div>
+              <div>Being a Resource person</div>
+              <div style={{ color: "rgba(200,220,255,0.7)" }}>Outside 3 pt/hr; Inside 2 pt/hr</div>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}><FileAttach row={18} /></div>
+              <div style={{ textAlign: "right", color: "rgba(200,220,255,0.8)", fontWeight: 700 }}>20</div>
+              <div style={{ textAlign: "right", display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center" }}>
+                <NumericInput inputIndex={25} value={resourceOutsideHours} onChange={(v) => setResourceOutsideHours(toInt(v))} min={0} placeholder="outside hrs" />
+                <NumericInput inputIndex={26} value={resourceInsideHours} onChange={(v) => setResourceInsideHours(toInt(v))} min={0} placeholder="inside hrs" />
                 <Badge>{Math.round(computed.perRow.outreach.resourceMarks)}</Badge>
               </div>
-            </Row>
+            </div>
 
-            {/* 19: Training */}
-            <Row number={19} activity="Training in Industry / Research (Days/Year)" rubric="Two weeks = full 30 pts (linear)" max={30}>
-              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center" }}>
-                <NumericInput value={trainingDays} onChange={(v) => setTrainingDays(v)} min={0} />
+            {/* Row 19 */}
+            <div className="row" style={styles.row} onClick={() => focusRowInput(19)}>
+              <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>19</div>
+              <div>Training in Industry / Research institutes (Days / Year)</div>
+              <div style={{ color: "rgba(200,220,255,0.7)" }}>{isAPIII ? "Two weeks = full 20 pts (linear)" : "Two weeks = full 30 pts (linear)"}</div>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}><FileAttach row={19} /></div>
+              <div style={{ textAlign: "right", color: "rgba(200,220,255,0.8)", fontWeight: 700 }}>{isAPIII ? 20 : 30}</div>
+              <div style={{ textAlign: "right", display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center" }}>
+                <NumericInput inputIndex={27} value={trainingDays} onChange={(v) => setTrainingDays(toFloat(v))} min={0} />
                 <Badge>{Math.round(computed.perRow.outreach.trainingMarks)}</Badge>
               </div>
-            </Row>
+            </div>
 
-            {/* 20: Awards & Recognition */}
-            <Row number={20} activity="Awards & Recognition" rubric="Awards 5 pts each; Editorial 4 pts; Review 1 pt" max={20}>
-              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center" }}>
-                <NumericInput value={awardsCount} onChange={(v) => setAwardsCount(v)} min={0} placeholder="awards" />
-                <NumericInput value={editorialCount} onChange={(v) => setEditorialCount(v)} min={0} placeholder="editorial" />
-                <NumericInput value={reviewsCount} onChange={(v) => setReviewsCount(v)} min={0} placeholder="reviews" />
+            {/* Row 20 */}
+            <div className="row" style={styles.row} onClick={() => focusRowInput(20)}>
+              <div style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>20</div>
+              <div>Awards & Recognition</div>
+              <div style={{ color: "rgba(200,220,255,0.7)" }}>Awards 5 pts each; Editorial 4 pts; Review 1 pt</div>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}><FileAttach row={20} /></div>
+              <div style={{ textAlign: "right", color: "rgba(200,220,255,0.8)", fontWeight: 700 }}>20</div>
+              <div style={{ textAlign: "right", display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center" }}>
+                <NumericInput inputIndex={28} value={awardsCount} onChange={(v) => setAwardsCount(toInt(v))} min={0} placeholder="awards" />
+                <NumericInput inputIndex={29} value={editorialCount} onChange={(v) => setEditorialCount(toInt(v))} min={0} placeholder="editorial" />
+                <NumericInput inputIndex={30} value={reviewsCount} onChange={(v) => setReviewsCount(toInt(v))} min={0} placeholder="reviews" />
                 <Badge>{Math.round(computed.perRow.outreach.awardsTotal)}</Badge>
               </div>
-            </Row>
+            </div>
 
-            <SectionTotal label="Outreach Total" max={100} value={computed.totals.outreach} />
-            <SectionTotal label="Grand Total" max={500} value={computed.totals.total} />
+            <SectionTotal label="Outreach Total" max={MAXS.outreach} value={computed.totals.outreach} />
+            <SectionTotal label="Grand Total" max={MAXS.grand} value={computed.totals.total} />
           </div>
         </div>
 
-        {/* file upload */}
+        {/* global file upload (multiple) */}
         <div style={{ marginTop: 14 }}>
-          <label style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>Attach proof (optional)</label>
+          <label style={{ color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>Attach proof (optional) — global (multiple files allowed)</label>
 
           <div
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
@@ -577,20 +1001,52 @@ export default function SubmissionForm({
             <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
               <div style={{ fontSize: 24 }}>📂</div>
               <div style={{ color: "rgba(200,220,255,0.7)" }}>
-                Drag & drop file here, or <label style={{ color: "#a7c8ff", textDecoration: "underline", cursor: "pointer" }}>
-                  <input type="file" accept=".pdf,.docx,.png,.jpg" style={{ display: "none" }} onChange={(e) => setProofFile(e.target.files?.[0] ?? null)} /> click to choose
+                Drag & drop files here, or{" "}
+                <label style={{ color: "#a7c8ff", textDecoration: "underline", cursor: editable ? "pointer" : "default", opacity: editable ? 1 : 0.6 }}>
+                  <input
+                    type="file"
+                    accept=".pdf,.docx,.png,.jpg"
+                    style={{ display: "none" }}
+                    multiple
+                    onChange={(e) => {
+                      if (!editable) return;
+                      const files = Array.from(e.target.files || []);
+                      if (files.length) setProofFiles((prev) => [...prev, ...files]);
+                      e.target.value = "";
+                    }}
+                    disabled={!editable}
+                  />{" "}
+                  click to choose
                 </label>
               </div>
             </div>
 
-            <div style={{ textAlign: "right" }}>
-              {proofFile ? (
-                <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                  <div style={{ color: "#eaf2ff" }}>{proofFile.name}</div>
-                  <button type="button" onClick={() => setProofFile(null)} style={{ background: "transparent", border: "1px solid rgba(255,255,255,0.04)", color: "#fff", padding: "6px 8px", borderRadius: 8 }}>Remove</button>
+            <div style={{ textAlign: "right", minWidth: 260 }}>
+              {/* show existing server-side proofs first */}
+              {existingProofs.length > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end" }}>
+                  {existingProofs.map((p, i) => (
+                    <div key={"exg-" + i} style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                      <div style={{ color: "#eaf2ff", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {p.url ? <a href={p.url} target="_blank" rel="noreferrer" style={{ color: "#cfe7ff" }}>{p.name}</a> : p.name}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* newly added files */}
+              {proofFiles.length > 0 ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end" }}>
+                  {proofFiles.map((f, i) => (
+                    <div key={i} style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                      <div style={{ color: "#eaf2ff", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</div>
+                      <button type="button" onClick={() => removeProofFile(i)} className="btn-small">Remove</button>
+                    </div>
+                  ))}
                 </div>
               ) : (
-                <div style={{ color: "rgba(200,220,255,0.6)" }}>No file chosen</div>
+                existingProofs.length === 0 && <div style={{ color: "rgba(200,220,255,0.6)" }}>No files chosen</div>
               )}
             </div>
           </div>
@@ -598,23 +1054,24 @@ export default function SubmissionForm({
 
         {status && <div style={{ marginTop: 12, color: status.startsWith("Error") ? "tomato" : "#9fe7ff" }}>{status}</div>}
       </form>
+
+      {/* Local styles (scoped via className) */}
+      <style>{`
+        .numeric-input { width: 110px; padding: 6px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.06); background: rgba(255,255,255,0.02); color: #eaf2ff; }
+        .btn-attach { padding: 6px 10px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.04); background: transparent; color: #a7c8ff; cursor: pointer; font-size: 13px; }
+        .btn-small { padding: 6px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.04); background: transparent; color: #eaf2ff; cursor: pointer; }
+        .file-attach-wrap { display: flex; justify-content: flex-end; align-items: center; gap: 8px; min-width: 140px; flex-direction: column; }
+        .file-present { display: flex; gap: 8px; align-items: center; }
+        .file-name { max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #cfe7ff; }
+        .btn-primary { padding: 10px 16px; border-radius: 10px; border: none; background: linear-gradient(90deg,#6a11cb,#2575fc); color: #fff; font-weight: 700; cursor: pointer; }
+        .btn-cancel { padding: 10px 14px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.04); background: transparent; color: #eaf2ff; cursor: pointer; }
+        .mini { width: auto; }
+      `}</style>
     </div>
   );
 }
 
 /* ---------------- small subcomponents used in the form ---------------- */
-
-function Row({ number, activity, rubric, max, children }) {
-  return (
-    <div style={{ display: "flex", gap: 12, alignItems: "center", padding: "12px 6px", borderBottom: "1px solid rgba(255,255,255,0.02)" }}>
-      <div style={{ width: 48, color: "rgba(200,220,255,0.7)", fontWeight: 700 }}>{number}</div>
-      <div style={{ flex: 1 }}>{activity}</div>
-      <div style={{ width: 300, color: "rgba(200,220,255,0.7)" }}>{rubric}</div>
-      <div style={{ width: 80, textAlign: "right", color: "rgba(200,220,255,0.8)", fontWeight: 700 }}>{max}</div>
-      <div style={{ width: 160, textAlign: "right" }}>{children}</div>
-    </div>
-  );
-}
 
 function SectionHeader({ text }) {
   return (
@@ -630,27 +1087,6 @@ function SectionTotal({ label, max, value }) {
         <div style={{ background: "rgba(0,0,0,0.4)", padding: "6px 10px", borderRadius: 8, minWidth: 56, textAlign: "center", fontWeight: 800 }}>{value}</div>
       </div>
     </div>
-  );
-}
-
-function NumericInput({ value, onChange, min = 0, step = "1", placeholder = "Enter" }) {
-  return (
-    <input
-      type="number"
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      style={{
-        width: 110,
-        padding: "6px 8px",
-        borderRadius: 6,
-        border: "1px solid rgba(255,255,255,0.06)",
-        background: "rgba(255,255,255,0.02)",
-        color: "#eaf2ff",
-      }}
-      min={min}
-      step={step}
-      placeholder={placeholder}
-    />
   );
 }
 

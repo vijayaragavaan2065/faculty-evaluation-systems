@@ -67,7 +67,7 @@ export default function Login({
               <div className="card feature-card">
                 <div className="card-icon"></div>
                 <div className="card-text">
-                  <div className="card-title" style={{ fontWeight: "bold" }}>Smart Evaluation</div>
+                  <div className="card-title">Smart Evaluation</div>
                   <div className="card-desc">Automated scoring and fairness checks</div>
                 </div>
               </div>

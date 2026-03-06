@@ -1,4 +1,3 @@
-// src/components/Header.jsx
 import React, { useState } from "react";
 import "./Header.css";
 import logo from "../assets/college-logo.png";
@@ -25,13 +24,23 @@ export default function Header({ user = {}, onNavigate = () => {}, onLogout = ()
   return (
     <header className="topbar">
       <div className="topbar-left">
-        <button className="hamburger" aria-label="Toggle menu" onClick={() => setMenuOpen(!menuOpen)}>
+        <button
+          className="hamburger"
+          aria-label="Toggle menu"
+          onClick={() => setMenuOpen((s) => !s)}
+          title="Toggle menu"
+        >
           <span className="hb-line" />
           <span className="hb-line" />
           <span className="hb-line" />
         </button>
 
-        <div className="brand" onClick={() => onNavigate("dashboard")} role="button">
+        <div
+          className="brand"
+          onClick={() => onNavigate("dashboard")}
+          role="button"
+          aria-label="Go to dashboard"
+        >
           <img src={logo} alt="logo" className="brand-logo" />
           <div className="brand-text">
             <div className="brand-title">{title}</div>
@@ -41,15 +50,39 @@ export default function Header({ user = {}, onNavigate = () => {}, onLogout = ()
       </div>
 
       <div className="topbar-right">
-        <div className="user-info">
+        <div className="user-info" aria-hidden={false}>
           <div className="user-name">{user?.name ?? user?.username ?? "Guest"}</div>
           <div className="user-role">{(user?.role || "").toString().toUpperCase()}</div>
         </div>
 
-        <nav className={`top-actions ${menuOpen ? "open" : ""}`}>
-          <button className="btn btn-ghost" onClick={() => onNavigate("dashboard")}>Dashboard</button>
-          <button className="btn btn-ghost" onClick={() => onNavigate("profile")}>Profile</button>
-          <button className="btn btn-primary" onClick={() => onLogout()}>Logout</button>
+        <nav className={`top-actions ${menuOpen ? "open" : ""}`} aria-label="Top actions">
+          <button
+            className="btn btn-primary"
+            onClick={() => {
+              onNavigate("dashboard");
+              setMenuOpen(false);
+            }}
+          >
+            Dashboard
+          </button>
+          <button
+            className="btn btn-primary"
+            onClick={() => {
+              onNavigate("profile");
+              setMenuOpen(false);
+            }}
+          >
+            Profile
+          </button>
+          <button
+            className="btn btn-primary"
+            onClick={() => {
+              onLogout();
+              setMenuOpen(false);
+            }}
+          >
+            Logout
+          </button>
         </nav>
       </div>
     </header>

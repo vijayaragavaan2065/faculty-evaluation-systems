@@ -1,4 +1,3 @@
-// src/Register.jsx
 import React, { useState } from "react";
 import "./Register.css";
 
@@ -34,7 +33,6 @@ export default function Register({
     const e = {};
     if (!name.trim()) e.name = "Full name is required";
     if (!email.trim()) e.email = "Email is required";
-    // basic email regex
     if (email && !/^\S+@\S+\.\S+$/.test(email)) e.email = "Enter a valid email";
     if (!password || password.length < 6) e.password = "Password must be ≥ 6 characters";
     if ((role === "faculty" || role === "hod") && !department) e.department = "Department is required for Faculty and HoD";
@@ -76,14 +74,15 @@ export default function Register({
       <nav className="reg-topnav">
         <div className="reg-left">
           <div className="reg-logo">
-            <div className="reg-logo-mark" aria-hidden />
+            {/* Removed decorative gradient square */}
+            {/* <div className="reg-logo-mark" aria-hidden /> */}
             <div className="reg-logo-text">AI Faculty Eval</div>
           </div>
         </div>
         <div className="reg-right">
-          <a className="nav-link ghost" href="#" onClick={(e)=>{e.preventDefault(); /* guest flow */}}>Guest</a>
-          <a className="nav-link" href="#" onClick={(e)=>{e.preventDefault(); /* goto dashboard*/}}>Dashboard</a>
-          <a className="nav-link ghost" href="#" onClick={(e)=>{e.preventDefault(); /* profile */}}>Profile</a>
+          <a className="nav-link ghost" href="#" onClick={(e)=>e.preventDefault()}>Guest</a>
+          <a className="nav-link" href="#" onClick={(e)=>e.preventDefault()}>Dashboard</a>
+          <a className="nav-link ghost" href="#" onClick={(e)=>e.preventDefault()}>Profile</a>
           <button className="nav-btn ghost" onClick={() => { localStorage.removeItem("token"); window.location.reload(); }}>Logout</button>
         </div>
       </nav>
@@ -96,7 +95,8 @@ export default function Register({
               <p className="reg-sub">Register to submit KPIs and receive AI-enabled feedback.</p>
             </div>
             <div className="reg-card-brand">
-              <div className="brand-mark" />
+              {/* Removed decorative gradient square */}
+              {/* <div className="brand-mark" /> */}
               <div className="brand-text">AI Faculty Eval</div>
             </div>
           </header>
@@ -108,10 +108,8 @@ export default function Register({
               placeholder="e.g., Dr. Priya Sharma"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              aria-invalid={!!errors.name}
-              aria-describedby={errors.name ? "err-name" : undefined}
             />
-            {errors.name && <div id="err-name" className="field-err-text">{errors.name}</div>}
+            {errors.name && <div className="field-err-text">{errors.name}</div>}
 
             <label className="field-label">Email</label>
             <input
@@ -120,10 +118,8 @@ export default function Register({
               placeholder="you@college.edu"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              aria-invalid={!!errors.email}
-              aria-describedby={errors.email ? "err-email" : undefined}
             />
-            {errors.email && <div id="err-email" className="field-err-text">{errors.email}</div>}
+            {errors.email && <div className="field-err-text">{errors.email}</div>}
 
             <label className="field-label">Password</label>
             <input
@@ -132,40 +128,46 @@ export default function Register({
               placeholder="Create a secure password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              aria-invalid={!!errors.password}
-              aria-describedby={errors.password ? "err-pass" : undefined}
             />
-            {errors.password && <div id="err-pass" className="field-err-text">{errors.password}</div>}
+            {errors.password && <div className="field-err-text">{errors.password}</div>}
 
             <div className="row-grid">
               <div>
                 <label className="field-label">Role</label>
-                <select className="field" value={role} onChange={(e)=>{ setRole(e.target.value); if(!(e.target.value==="faculty"||e.target.value==="hod")) setDepartment(""); }}>
-                  <option value="faculty">Faculty</option>
-                  <option value="hod">HoD</option>
-                  <option value="director">Director</option>
-                  <option value="registrar">Registrar</option>
-                  <option value="office_head">Office Head</option>
-                  <option value="admin">Admin</option>
-                </select>
+                <div className="custom-select">
+                  <select
+                    className="field"
+                    value={role}
+                    onChange={(e)=>{ setRole(e.target.value); if(!(e.target.value==="faculty"||e.target.value==="hod")) setDepartment(""); }}
+                  >
+                    <option value="faculty">Faculty</option>
+                    <option value="hod">HoD</option>
+                    <option value="director">Director</option>
+                    <option value="registrar">Registrar</option>
+                    <option value="office_head">Office Head</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                </div>
               </div>
 
               <div>
-                <label className="field-label">Department { (role==="faculty"||role==="hod") && <span className="required-tag">required</span> }</label>
+                <label className="field-label">
+                  Department { (role==="faculty"||role==="hod") && <span className="required-tag">required</span> }
+                </label>
                 <div className={`custom-select ${errors.department ? "field-error" : ""}`}>
                   <select
                     className="field"
                     value={department}
                     onChange={(e)=>setDepartment(e.target.value)}
                     disabled={!(role==="faculty"||role==="hod")}
-                    aria-invalid={!!errors.department}
-                    aria-describedby={errors.department ? "err-dept" : undefined}
                   >
-                    <option value="">{role==="faculty"||role==="hod" ? "Select department" : " — optional — "}</option>
+                    <option value="">
+                      {role==="faculty"||role==="hod" ? "Select department" : " — optional — "}
+                    </option>
                     {ALLOWED_DEPARTMENTS.map((d) => <option key={d} value={d}>{d}</option>)}
                   </select>
                 </div>
-                {errors.department && <div id="err-dept" className="field-err-text">{errors.department}</div>}
+                {errors.department && <div className="field-err-text">{errors.department}</div>}
               </div>
             </div>
 
@@ -180,7 +182,7 @@ export default function Register({
             </div>
 
             {msg && (
-              <div className={`form-msg ${msg.type === "error" ? "err" : "ok"}`} role="status">
+              <div className={`form-msg ${msg.type === "error" ? "err" : "ok"}`}>
                 {msg.text}
               </div>
             )}

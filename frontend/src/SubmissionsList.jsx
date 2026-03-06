@@ -9,7 +9,7 @@ import SubmissionDetail from "./SubmissionDetail";
  *  - apiBase: string base url (default http://127.0.0.1:8000)
  *  - endpoint: optional full endpoint to fetch submissions from (overrides default /api/submissions/)
  *  - user: current user object (optional) - used when mineOnly is true or to pre-fill department for HOD
- *  - mineOnly: boolean, when true force filter by user.id
+ *  - mineOnly: boolean, when true force filter by user.id/_id
  *  - showDeptSelect: boolean, when true show an editable Department dropdown (Director/Admin)
  *  - fixedDepartment: string|null - if provided, lock results to this department (useful for HOD)
  */
@@ -23,12 +23,18 @@ export default function SubmissionsList({
 }) {
   const [submissions, setSubmissions] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [department, setDepartment] = useState(fixedDepartment ?? "");
+  const [department, setDepartment] = useState("");
   const [status, setStatus] = useState(""); // "", "submitted", "hod_verified", "finalized", "rejected"
   const [message, setMessage] = useState("");
   const [selectedId, setSelectedId] = useState(null);
+  const [selectedEditable, setSelectedEditable] = useState(false);
+  const [lastFetchUrl, setLastFetchUrl] = useState(null);
 
-  const token = localStorage.getItem("token");
+  // Determine current role (fallback to faculty)
+  const role = (user?.role || "").toString().toLowerCase() || "faculty";
+
+  // Roles that may verify/approve
+  const HIGHER_ROLES = new Set(["hod", "director", "registrar", "office_head", "admin"]);
 
   // Authoritative department list
   const DEPARTMENTS = [
@@ -54,18 +60,62 @@ export default function SubmissionsList({
     { label: "Rejected", value: "rejected" },
   ];
 
-  // Determine current role (fallback to faculty)
-  const role = (user?.role || "").toString().toLowerCase() || "faculty";
+  // Robust token finder (looks in common localStorage keys and user object)
+  function findAuthToken() {
+    const keys = ["token", "access", "access_token", "auth_token"];
+    for (const k of keys) {
+      const v = localStorage.getItem(k);
+      if (v) return v;
+    }
+    try {
+      const uRaw = localStorage.getItem("user");
+      if (uRaw) {
+        const parsed = JSON.parse(uRaw);
+        if (parsed?.token) return parsed.token;
+        if (parsed?.access_token) return parsed.access_token;
+      }
+    } catch (e) {
+      // ignore JSON parse errors
+    }
+    return null;
+  }
 
-  // Roles that may verify/approve (HOD, Registrar, Director, Office Head, Admin)
-  const HIGHER_ROLES = new Set(["hod", "director", "registrar", "office_head", "admin"]);
+  // Determine user id robustly: prefers _id, then id, then email
+  function getUserId() {
+    if (user) return user._id || user.id || user.email || null;
+    try {
+      const uRaw = localStorage.getItem("user");
+      if (uRaw) {
+        const parsed = JSON.parse(uRaw);
+        return parsed?._id || parsed?.id || parsed?.email || null;
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  // Initialize department state from props or user
+  useEffect(() => {
+    if (fixedDepartment) {
+      setDepartment(fixedDepartment);
+    } else if (user?.department) {
+      setDepartment(user.department);
+    } else {
+      setDepartment(""); // All Departments
+    }
+  }, [fixedDepartment, user?.department]);
 
   // Build URL with optional query params department and status and optional faculty_id
   function buildUrl() {
     const params = new URLSearchParams();
 
-    if (mineOnly && user?.id) {
-      params.set("faculty_id", user.id);
+    // If mineOnly, pass faculty_id (prefer backend filtering by token if not available)
+    if (mineOnly) {
+      const uid = getUserId();
+      if (uid) {
+        params.set("faculty_id", uid);
+      } else {
+        console.warn("SubmissionsList: mineOnly true but user id not available — backend may infer user from token.");
+      }
     }
 
     // If there is a fixedDepartment (HOD), prefer that
@@ -89,15 +139,16 @@ export default function SubmissionsList({
     return qstr ? `${base}?${qstr}` : base;
   }
 
-  async function fetchJsonSafe(res) {
+  // Safe JSON parsing with fallback
+  async function parseResponse(res) {
     try {
-      const txt = await res.text();
+      const text = await res.text();
       try {
-        return JSON.parse(txt);
+        return JSON.parse(text);
       } catch {
-        return { raw: txt };
+        return { raw: text };
       }
-    } catch {
+    } catch (e) {
       return {};
     }
   }
@@ -107,19 +158,33 @@ export default function SubmissionsList({
     setMessage("");
     try {
       const url = buildUrl();
-      const headers = token ? { Authorization: "Bearer " + token } : {};
-      const res = await fetch(url, { headers });
-      const body = await fetchJsonSafe(res);
+      setLastFetchUrl(url);
+      const token = findAuthToken();
+      const headers = token ? { Authorization: "Bearer " + token, Accept: "application/json" } : { Accept: "application/json" };
+
+      console.debug("[SubmissionsList] fetching", url, { headers });
+
+      const res = await fetch(url, { headers, credentials: "include" });
+      const body = await parseResponse(res);
+
       if (!res.ok) {
         const errMsg = body?.detail || body?.message || (body.raw ? body.raw : `Request failed (${res.status})`);
         setMessage("Error: " + errMsg);
         setSubmissions([]);
+        console.error("[SubmissionsList] fetch failed", res.status, body);
         return;
       }
-      const list = body.submissions ?? body.results ?? body.data ?? body ?? [];
-      setSubmissions(Array.isArray(list) ? list : []);
+
+      // Accept several possible payload shapes
+      const list = body.submissions ?? body.results ?? body.data ?? body.items ?? body ?? [];
+      const normalized = Array.isArray(list) ? list : [];
+      setSubmissions(normalized);
+      if (!normalized.length) {
+        console.info("[SubmissionsList] no submissions returned", url);
+      }
     } catch (err) {
-      setMessage("Error: " + (err?.message || String(err)));
+      console.error("[SubmissionsList] network error", err);
+      setMessage("Network error: " + (err?.message || String(err)));
       setSubmissions([]);
     } finally {
       setLoading(false);
@@ -127,19 +192,13 @@ export default function SubmissionsList({
   }
 
   useEffect(() => {
-    // When fixedDepartment prop changes (HOD load), set local department
-    if (fixedDepartment) setDepartment(fixedDepartment);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fixedDepartment]);
-
-  useEffect(() => {
+    // Load whenever filters change
     load();
-    // run when department or status changes, or endpoint / mineOnly / user changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [department, status, endpoint, mineOnly, user?.id, fixedDepartment]);
+  }, [department, status, endpoint, mineOnly, user?.id, user?._id, fixedDepartment]);
 
+  // Verify / approve handlers (only for higher roles)
   async function handleVerify(id, action) {
-    // Only allow higher roles to call this (defensive check)
     if (!HIGHER_ROLES.has(role)) {
       setMessage("Not authorized to verify submissions.");
       return;
@@ -147,33 +206,36 @@ export default function SubmissionsList({
 
     const comments = window.prompt(`Add comments for ${action} (optional):`, "");
     if (!window.confirm(`Confirm to ${action} this submission?`)) return;
+
     try {
+      const token = findAuthToken();
+      const headers = token ? { Authorization: "Bearer " + token } : {};
       const form = new FormData();
       form.append("action", action);
       if (comments) form.append("comments", comments);
 
-      const headers = token ? { Authorization: "Bearer " + token } : {};
       const res = await fetch(`${apiBase.replace(/\/$/, "")}/api/submissions/${encodeURIComponent(id)}/verify`, {
         method: "PATCH",
         headers,
         body: form,
+        credentials: "include",
       });
 
-      const body = await fetchJsonSafe(res);
+      const body = await parseResponse(res);
       if (!res.ok) {
-        const errMsg = body?.detail || body?.message || (body.raw ? body.raw : `Verify failed (${res.status})`);
-        throw new Error(errMsg);
+        const err = body?.detail || body?.message || (body.raw ? body.raw : `Verify failed (${res.status})`);
+        throw new Error(err);
       }
-
       setMessage(`Submission ${action}d.`);
       await load();
     } catch (err) {
+      console.error("[SubmissionsList] verify error", err);
       setMessage("Error: " + (err?.message || String(err)));
     }
   }
 
-  function StatusBadge({ status }) {
-    const normalized = (status || "").toString().toLowerCase();
+  function StatusBadge({ status: s }) {
+    const normalized = (s || "").toString().toLowerCase();
     const color =
       normalized === "finalized" || normalized === "verified"
         ? "#28A745"
@@ -190,38 +252,58 @@ export default function SubmissionsList({
       normalized === "finalized" ? "Finalized" :
       normalized === "rejected" ? "Rejected" :
       normalized === "submitted" ? "Submitted" :
-      status || "unknown";
+      s || "Unknown";
 
     return (
-      <span
-        style={{
-          background: color,
-          color: "#fff",
-          padding: "4px 10px",
-          borderRadius: 12,
-          fontSize: 13,
-          fontWeight: 700,
-          textTransform: "capitalize",
-          display: "inline-block",
-        }}
-      >
+      <span style={{
+        background: color, color: "#fff", padding: "4px 10px", borderRadius: 12,
+        fontSize: 13, fontWeight: 700, textTransform: "capitalize", display: "inline-block"
+      }}>
         {label}
       </span>
     );
   }
 
+  // Determine if the current user can edit a submission:
+  // - owner (faculty_user_id matches current user id)
+  // - and submission is in an editable state (not approved/finalized/verified)
+  const EDITABLE_STATUSES = new Set(["", "submitted", "rejected"]); // tweak as needed
+  function canEditSubmission(submission) {
+    const uid = getUserId();
+    if (!uid) return false;
+    const ownerId = submission.faculty_user_id || submission.user_id || submission.faculty_id || submission.owner_id || null;
+    if (!ownerId) return false;
+    // ownerId may be an ObjectId string; compare loosely
+    if (ownerId.toString() !== uid.toString()) return false;
+    const st = (submission?.status || "").toString().toLowerCase();
+    return EDITABLE_STATUSES.has(st);
+  }
+
+  // Open submission detail modal in view or edit mode
+  function openDetail(id, editable = false) {
+    setSelectedId(id);
+    setSelectedEditable(Boolean(editable));
+  }
+
+  // Close handler used by SubmissionDetail
+  function handleCloseDetail() {
+    setSelectedId(null);
+    setSelectedEditable(false);
+  }
+
+  // Called when child detail reports an update (saved/edited)
+  async function handleDetailUpdated() {
+    setSelectedId(null);
+    setSelectedEditable(false);
+    await load();
+  }
+
   function canShowVerifyButtonsFor(roleArg, submission) {
     const st = (submission?.status || "").toString().toLowerCase();
     if (!HIGHER_ROLES.has(roleArg)) return false;
-    if (roleArg === "hod") {
-      return st === "submitted";
-    }
-    if (roleArg === "registrar") {
-      return st === "hod_verified";
-    }
-    if (roleArg === "director" || roleArg === "admin" || roleArg === "office_head") {
-      return st === "submitted" || st === "hod_verified";
-    }
+    if (roleArg === "hod") return st === "submitted";
+    if (roleArg === "registrar") return st === "hod_verified";
+    if (roleArg === "director" || roleArg === "admin" || roleArg === "office_head") return st === "submitted" || st === "hod_verified";
     return false;
   }
 
@@ -232,6 +314,7 @@ export default function SubmissionsList({
           <h3 style={{ margin: 0, color: "#205067", fontSize: 20 }}>Submissions</h3>
           <div style={{ color: "#617882", marginTop: 6, fontSize: 13 }}>
             {endpoint ? "Showing: Department submissions" : mineOnly ? "Showing: Your submissions" : "Showing: Submissions"}
+            {lastFetchUrl ? ` — ${submissions.length} items` : ""}
           </div>
         </div>
 
@@ -246,20 +329,11 @@ export default function SubmissionsList({
               <select
                 value={department}
                 onChange={(e) => setDepartment(e.target.value)}
-                style={{
-                  padding: "8px 10px",
-                  borderRadius: 8,
-                  background: "#fff",
-                  border: "1px solid #e0e6eb",
-                  color: "#182B1C",
-                  minWidth: 260,
-                }}
+                style={{ padding: "8px 10px", borderRadius: 8, background: "#fff", border: "1px solid #e0e6eb", color: "#182B1C", minWidth: 260 }}
               >
                 <option value="">All Departments</option>
-                {DEPARTMENTS.filter((d) => d !== "All Departments").map((d) => (
-                  <option key={d} value={d}>
-                    {d}
-                  </option>
+                {DEPARTMENTS.filter(d => d !== "All Departments").map((d) => (
+                  <option key={d} value={d}>{d}</option>
                 ))}
               </select>
             ) : (
@@ -274,20 +348,9 @@ export default function SubmissionsList({
             <select
               value={status}
               onChange={(e) => setStatus(e.target.value)}
-              style={{
-                padding: "8px 10px",
-                borderRadius: 8,
-                background: "#fff",
-                border: "1px solid #e0e6eb",
-                color: "#182B1C",
-                minWidth: 160,
-              }}
+              style={{ padding: "8px 10px", borderRadius: 8, background: "#fff", border: "1px solid #e0e6eb", color: "#182B1C", minWidth: 160 }}
             >
-              {STATUS_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
+              {STATUS_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
           </div>
 
@@ -295,15 +358,9 @@ export default function SubmissionsList({
             <button
               onClick={() => load()}
               style={{
-                padding: "8px 12px",
-                borderRadius: 10,
-                border: "none",
-                background: "linear-gradient(90deg,#007BFF,#00C6FF)",
-                color: "#fff",
-                cursor: "pointer",
-                fontWeight: 700,
-                marginLeft: 8,
-                height: 40,
+                padding: "8px 12px", borderRadius: 10, border: "none",
+                background: "linear-gradient(90deg,#007BFF,#00C6FF)", color: "#fff", cursor: "pointer",
+                fontWeight: 700, marginLeft: 8, height: 40,
               }}
             >
               Refresh
@@ -320,101 +377,93 @@ export default function SubmissionsList({
         <div style={{ color: "#617882" }}>No submissions found.</div>
       ) : (
         <div style={{ display: "grid", gap: 12 }}>
-          {submissions.map((s) => (
-            <div
-              key={s.id}
-              style={{
-                borderRadius: 12,
-                padding: 14,
-                background: "#fff",
-                border: "1px solid #e0e6eb",
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                gap: 12,
-                flexWrap: "wrap",
-                boxShadow: "0 4px 10px rgba(0,0,0,0.05)",
-              }}
-            >
-              <div style={{ minWidth: 240 }}>
-                <div style={{ fontWeight: 800, color: "#205067", fontSize: 15 }}>
-                  {s.faculty_name ? s.faculty_name : s.faculty_rank ?? "-"} {s.academic_year ? `— ${s.academic_year}` : ""}
-                </div>
+          {submissions.map((s) => {
+            const key = s._id || s.id || JSON.stringify(s).slice(0, 10);
+            // score display: try multiple shapes
+            const scoreText =
+              typeof s.score?.total === "number"
+                ? `${s.score.total} / ${s.score.max ?? 100}`
+                : typeof s.score === "number"
+                ? `${s.score} / 100`
+                : (s.score && typeof s.score === "string" ? s.score : "- /100");
 
-                <div style={{ color: "#617882", marginTop: 6, fontSize: 13 }}>
-                  Faculty ID: {s.faculty_user_id ?? "-"} • Dept: {s.department ?? "-"}
-                </div>
-              </div>
-
-              <div style={{ display: "flex", alignItems: "center", gap: 16, marginLeft: "auto" }}>
-                <div style={{ textAlign: "right", minWidth: 140 }}>
-                  <div style={{ fontWeight: 800, color: "#205067", fontSize: 18 }}>
-                    {typeof s.score?.total === "number" ? `${s.score.total} / 100` : typeof s.score === "number" ? `${s.score} / 100` : "- /100"}
+            return (
+              <div key={key} style={{
+                borderRadius: 12, padding: 14, background: "#fff", border: "1px solid #e0e6eb",
+                display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap",
+                boxShadow: "0 4px 10px rgba(0,0,0,0.05)"
+              }}>
+                <div style={{ minWidth: 240 }}>
+                  <div style={{ fontWeight: 800, color: "#205067", fontSize: 15 }}>
+                    {s.faculty_name ? s.faculty_name : (s.faculty_rank ?? "-")} {s.academic_year ? `— ${s.academic_year}` : ""}
                   </div>
-                  <div style={{ marginTop: 6 }}>
-                    <StatusBadge status={s.status ?? "unknown"} />
+                  <div style={{ color: "#617882", marginTop: 6, fontSize: 13 }}>
+                    Faculty ID: {s.faculty_user_id ?? s.user_id ?? "-"} • Dept: {s.department ?? "-"}
                   </div>
                 </div>
 
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <button
-                    onClick={() => setSelectedId(s.id)}
-                    style={{
-                      padding: "8px 12px",
-                      borderRadius: 10,
-                      border: "1px solid #e0e6eb",
-                      background: "#fff",
-                      color: "#205067",
-                      cursor: "pointer",
-                      fontWeight: 700,
-                    }}
-                  >
-                    View
-                  </button>
+                <div style={{ display: "flex", alignItems: "center", gap: 16, marginLeft: "auto" }}>
+                  <div style={{ textAlign: "right", minWidth: 140 }}>
+                    <div style={{ fontWeight: 800, color: "#205067", fontSize: 18 }}>
+                      {scoreText}
+                    </div>
+                    <div style={{ marginTop: 6 }}>
+                      <StatusBadge status={s.status ?? "unknown"} />
+                    </div>
+                  </div>
 
-                  {canShowVerifyButtonsFor(role, s) ? (
-                    <>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <button
+                      onClick={() => openDetail(s._id || s.id, false)}
+                      style={{
+                        padding: "8px 12px", borderRadius: 10, border: "1px solid #e0e6eb", background: "#fff",
+                        color: "#205067", cursor: "pointer", fontWeight: 700,
+                      }}
+                    >
+                      View
+                    </button>
+
+                    {/* Edit: visible to the faculty owner when editable */}
+                    {canEditSubmission(s) && (
                       <button
-                        onClick={() => handleVerify(s.id, "approve")}
+                        onClick={() => openDetail(s._id || s.id, true)}
+                        title="Edit your submission"
                         style={{
-                          padding: "8px 12px",
-                          borderRadius: 10,
-                          border: "none",
-                          background: "#28a745",
-                          color: "#fff",
-                          cursor: "pointer",
-                          fontWeight: 700,
+                          padding: "8px 12px", borderRadius: 10, border: "none", background: "#0ea5a3", color: "#fff",
+                          cursor: "pointer", fontWeight: 700,
                         }}
                       >
-                        Approve
+                        Edit
                       </button>
-                      <button
-                        onClick={() => handleVerify(s.id, "reject")}
-                        style={{
-                          padding: "8px 12px",
-                          borderRadius: 10,
-                          border: "none",
-                          background: "#DC3545",
-                          color: "#fff",
-                          cursor: "pointer",
-                          fontWeight: 700,
-                        }}
-                      >
-                        Reject
-                      </button>
-                    </>
-                  ) : (
-                    (s.finalized || s.status === "hod_verified" || s.status === "finalized" || s.status === "rejected") ? (
-                      <div style={{ color: "#617882", fontSize: 12, textAlign: "right" }}>
-                        <div>Last action by: {s.verified_history && s.verified_history.length ? s.verified_history[s.verified_history.length - 1].actor_name : (s.finalized_by?.name ?? s.verified_by?.name ?? "-")}</div>
-                        <div style={{ marginTop: 4 }}>{s.finalized_at ? new Date(s.finalized_at).toLocaleString() : (s.verified_at ? new Date(s.verified_at).toLocaleString() : "")}</div>
-                      </div>
-                    ) : null
-                  )}
+                    )}
+
+                    {/* verify buttons for higher roles */}
+                    {canShowVerifyButtonsFor(role, s) ? (
+                      <>
+                        <button onClick={() => handleVerify(s._id || s.id, "approve")} style={{
+                          padding: "8px 12px", borderRadius: 10, border: "none", background: "#28a745", color: "#fff",
+                          cursor: "pointer", fontWeight: 700,
+                        }}>Approve</button>
+
+                        <button onClick={() => handleVerify(s._id || s.id, "reject")} style={{
+                          padding: "8px 12px", borderRadius: 10, border: "none", background: "#DC3545", color: "#fff",
+                          cursor: "pointer", fontWeight: 700,
+                        }}>Reject</button>
+                      </>
+                    ) : (
+                      // when not showing verify buttons, show last action summary for finalized items
+                      (s.finalized || s.status === "hod_verified" || s.status === "finalized" || s.status === "rejected") ? (
+                        <div style={{ color: "#617882", fontSize: 12, textAlign: "right" }}>
+                          <div>Last action by: {s.verified_history && s.verified_history.length ? s.verified_history[s.verified_history.length - 1].actor_name : (s.finalized_by?.name ?? s.verified_by?.name ?? "-")}</div>
+                          <div style={{ marginTop: 4 }}>{s.finalized_at ? new Date(s.finalized_at).toLocaleString() : (s.verified_at ? new Date(s.verified_at).toLocaleString() : "")}</div>
+                        </div>
+                      ) : null
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -422,11 +471,9 @@ export default function SubmissionsList({
         <SubmissionDetail
           apiBase={apiBase}
           id={selectedId}
-          onClose={() => setSelectedId(null)}
-          onUpdated={() => {
-            setSelectedId(null);
-            load();
-          }}
+          editable={selectedEditable}
+          onClose={handleCloseDetail}
+          onUpdated={handleDetailUpdated}
         />
       )}
     </div>

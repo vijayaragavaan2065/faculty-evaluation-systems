@@ -15,7 +15,13 @@
 }
 
 * { box-sizing: border-box; }
-body, html, #root { height: 100%; margin: 0; font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; background: linear-gradient(180deg, var(--bg-1), var(--bg-2)); color: var(--text); }
+body, html, #root {
+  height: 100%;
+  margin: 0;
+  font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+  background: linear-gradient(180deg, var(--bg-1), var(--bg-2));
+  color: var(--text);
+}
 
 /* top nav */
 .reg-topnav {
@@ -28,11 +34,6 @@ body, html, #root { height: 100%; margin: 0; font-family: "Inter", system-ui, -a
   gap: 12px;
 }
 .reg-logo { display:flex; align-items:center; gap:12px; cursor:pointer; }
-.reg-logo-mark {
-  width:44px; height:44px; border-radius:10px;
-  background: linear-gradient(135deg, var(--accent1), var(--accent2));
-  box-shadow: 0 10px 30px rgba(60,40,120,0.25);
-}
 .reg-logo-text { font-weight: 800; font-size: 18px; letter-spacing: -.2px; }
 .reg-right { display:flex; gap:12px; align-items:center; }
 .nav-link { color: rgba(230,240,255,0.85); text-decoration:none; font-weight:600; font-size:14px; padding:8px 10px; border-radius:8px; }
@@ -70,7 +71,6 @@ body, html, #root { height: 100%; margin: 0; font-family: "Inter", system-ui, -a
 
 /* brand in header */
 .reg-card-brand { display:flex; align-items:center; gap:10px; }
-.brand-mark { width:36px; height:36px; border-radius:8px; background: linear-gradient(135deg,var(--accent1),var(--accent2)); box-shadow: 0 8px 22px rgba(30,20,90,0.28); }
 .brand-text { font-weight:700; font-size:14px; color:#fff; }
 
 /* form */
@@ -82,15 +82,20 @@ body, html, #root { height: 100%; margin: 0; font-family: "Inter", system-ui, -a
 
 /* field label & input */
 .field-label { display:block; font-size:13px; color: var(--muted); margin-bottom: 6px; font-weight: 600; }
+
+/* generic field style used by inputs and selects */
 .field {
   width:100%;
   padding: 12px 14px;
   border-radius: 12px;
-  border: 1px solid rgba(255,255,255,0.04);
-  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.08);
+  background: var(--card);
   color: var(--text);
   font-size: 15px;
   transition: box-shadow .12s ease, transform .08s ease;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
 }
 .field:focus { outline: none; box-shadow: 0 6px 18px rgba(40,40,120,0.14); transform: translateY(-1px); border-color: rgba(130,140,255,0.14); }
 
@@ -108,8 +113,58 @@ body, html, #root { height: 100%; margin: 0; font-family: "Inter", system-ui, -a
 /* required tag */
 .required-tag { font-size:11px; color:#ffd9d9; margin-left:6px; }
 
-/* department custom select styling tweaks */
-.custom-select select.field { appearance: none; background-image: linear-gradient(45deg, transparent 50%, rgba(255,255,255,0.35) 50%), linear-gradient(135deg, rgba(255,255,255,0.35) 50%, transparent 50%); background-position: calc(100% - 18px) calc(1em + 2px), calc(100% - 13px) calc(1em + 2px); background-size: 7px 7px, 7px 7px; background-repeat: no-repeat; padding-right: 36px; }
+/* select wrapper */
+.custom-select {
+  position: relative;
+}
+
+/* custom dropdown arrow */
+.custom-select::after {
+  content: "";
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  transform: translateY(-50%) rotate(45deg);
+  border-right: 2px solid rgba(255,255,255,0.6);
+  border-bottom: 2px solid rgba(255,255,255,0.6);
+  pointer-events: none;
+  opacity: 0.9;
+}
+
+/* select fields same as inputs */
+select.field {
+  background: var(--card) !important;
+  border: 1px solid rgba(255,255,255,0.08) !important;
+  color: var(--text) !important;
+  font-size: 15px;
+  font-weight: 500;
+  border-radius: 12px;
+  padding: 12px 14px;
+  padding-right: 40px;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  transition: box-shadow .12s ease, transform .08s ease;
+}
+
+/* disabled select (still visible) */
+select.field:disabled {
+  background: var(--card) !important;
+  color: rgba(234,242,255,0.55) !important;
+  border: 1px dashed rgba(255,255,255,0.25) !important;
+  cursor: not-allowed;
+  opacity: 1 !important;
+}
+
+/* focus state for select */
+select.field:focus {
+  outline: none;
+  box-shadow: 0 6px 18px rgba(40,40,120,0.14);
+  transform: translateY(-1px);
+  border-color: rgba(130,140,255,0.14);
+}
 
 /* primary button */
 .btn-primary {
